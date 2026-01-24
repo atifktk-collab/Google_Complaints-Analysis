@@ -253,6 +253,8 @@ class SurgeHighlighterAgent:
         
         # Check regions
         for region, count in target_data['regions'].items():
+            if count < 15:
+                continue
             last_week_count = last_week_data['regions'].get(region, 0)
             mtd_avg_count = mtd_avg_data['regions'].get(region, 0)
             
@@ -270,6 +272,8 @@ class SurgeHighlighterAgent:
         
         # Check exchanges
         for exchange_key, count in target_data['exchanges'].items():
+            if count < 10:
+                continue
             region, exc_id = exchange_key.split('|')
             last_week_count = last_week_data['exchanges'].get(exchange_key, 0)
             mtd_avg_count = mtd_avg_data['exchanges'].get(exchange_key, 0)
@@ -289,6 +293,8 @@ class SurgeHighlighterAgent:
         
         # Check NEs
         for ne_key, count in target_data['nes'].items():
+            if count < 5:
+                continue
             region, exc_id, cabinet_id = ne_key.split('|')
             last_week_count = last_week_data['nes'].get(ne_key, 0)
             mtd_avg_count = mtd_avg_data['nes'].get(ne_key, 0)
