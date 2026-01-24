@@ -1,0 +1,15 @@
+database:
+  pool_size: 5
+  pool_recycle: 3600
+
+full_analysis_period_days: 90
+
+thresholds:
+  z_score_warning: 2.0
+  z_score_critical: 3.0
+  correlation_min: 0.7
+  trend_significance: 0.05  # p-value threshold for trend significance
+  variation_threshold_percent: 15.0  # Flag variations above 15%
+
+ui:
+  refresh_interval: 300

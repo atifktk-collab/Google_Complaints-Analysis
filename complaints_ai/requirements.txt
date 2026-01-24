@@ -1,0 +1,9 @@
+polars
+sqlalchemy
+pymysql
+streamlit
+pandas
+numpy
+scipy
+python-dotenv
+pyyaml
