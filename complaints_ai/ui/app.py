@@ -92,6 +92,15 @@ page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotte
 st.sidebar.markdown("---")
 st.sidebar.info("System Status: **Active** (Daily Analysis Mode)")
 
+# DB Stats for debugging
+try:
+    with engine.connect() as conn:
+        res = conn.execute(text("SELECT count(*) FROM complaints_raw"))
+        total_rows = res.scalar()
+        st.sidebar.write(f"📁 Total Data: {total_rows} rows")
+except Exception as e:
+    st.sidebar.error(f"❌ DB Error: {e}")
+
 # --- Page 1: CSV Upload ---
 if page == "CSV Upload":
     st.title("📂 Data Ingestion")
