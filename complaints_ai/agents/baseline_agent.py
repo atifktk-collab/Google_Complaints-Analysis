@@ -22,7 +22,7 @@ class BaselineAgent:
             "Type": "sr_type",
             "Region": "region",
             "Exchange": "exc_id",
-            "OLT": "olt_id",
+            "City": "city",
             "RCA": "rca"
         }
         self.windows = [7, 14, 30]

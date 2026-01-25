@@ -49,7 +49,7 @@ class CorrelationAgent:
             start_date = end_date - timedelta(days=30)
             
             query = f"""
-                SELECT sr_open_dt, sr_type, region, exc_id, olt_id, rca
+                SELECT sr_open_dt, sr_type, region, exc_id, city, rca
                 FROM complaints_raw
                 WHERE sr_open_dt BETWEEN '{start_date.date()}' AND '{end_date.date()}'
             """
@@ -90,7 +90,7 @@ class CorrelationAgent:
                 # Get map of column name
                 dim_map = {
                     "Type": "sr_type", "Region": "region", "Exchange": "exc_id",
-                    "OLT": "olt_id", "RCA": "rca"
+                    "City": "city", "RCA": "rca"
                 }
                 primary_col = dim_map.get(primary_dim)
                 if not primary_col: continue

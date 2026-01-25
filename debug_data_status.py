@@ -9,6 +9,10 @@ logger = logging.getLogger("DebugDB")
 
 def debug_data():
     print("=== DEBUGGING DATABASE CONTENT ===")
+    from complaints_ai.db import mysql
+    url = mysql.get_db_url()
+    parts = url.split(":")
+    print(f"DEBUG: URL (masked): {parts[0]}:{parts[1]}:***@{parts[2].split('@')[-1]}")
     
     session = get_session()
     engine = get_engine()

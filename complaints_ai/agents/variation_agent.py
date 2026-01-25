@@ -24,8 +24,9 @@ class VariationAgent:
             "Type": "sr_type",
             "Region": "region",
             "Exchange": "exc_id",
-            "OLT": "olt_id",
-            "RCA": "rca"
+            "City": "city",
+            "RCA": "rca",
+            "Total": "pl.lit('Total')"
         }
 
     def load_config(self):
@@ -60,7 +61,10 @@ class VariationAgent:
 
     def run(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Calculates variations for a specific date.
+        Calculates variations for a specific date using new redefined logic:
+        - DOD: Target Date vs Same Day Last Week
+        - WOW: WTD average (Mon-Sun) vs Previous Week same days average
+        - MOM: Current Month average vs Last Month same relative days average
         
         Args:
             context: Must contain 'target_date' (str YYYY-MM-DD).
@@ -70,78 +74,120 @@ class VariationAgent:
         if not target_date_str:
             return {"status": "error", "message": "Missing target_date"}
             
-        logger.info(f"Running variation analysis for {target_date_str}")
+        logger.info(f"Running redefined variation analysis for {target_date_str}")
         
         try:
             target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
             
-            # Define comparison periods
-            comparisons = {
-                "DOD": timedelta(days=1),      # Day over Day
-                "WOW": timedelta(days=7),      # Week over Week
-                "MOM": timedelta(days=30)      # Month over Month
-            }
+            # --- DOD Logic: Target Date vs Same Day Last Week ---
+            # Using timedelta(days=7)
+            dod_prev_date = target_date - timedelta(days=7)
             
+            # --- WOW Logic: WTD Average vs Previous Week Average ---
+            # Current Week start (Monday)
+            current_week_start = target_date - timedelta(days=target_date.weekday())
+            # Previous Week range (same relative offset)
+            prev_week_start = current_week_start - timedelta(days=7)
+            prev_week_end = target_date - timedelta(days=7)
+            
+            # --- MOM Logic: Monthly average comparison ---
+            current_month_start = target_date.replace(day=1)
+            # Find last month same relative days
+            if target_date.month == 1:
+                prev_month_start = target_date.replace(year=target_date.year-1, month=12, day=1)
+            else:
+                prev_month_start = target_date.replace(month=target_date.month-1, day=1)
+                
+            prev_month_end = prev_month_start + (target_date - current_month_start)
+
             all_variations = []
             
             for dim_name, dim_col in self.dimensions.items():
                 logger.info(f"Analyzing variations for dimension: {dim_name}")
                 
-                # Fetch current day data
-                current_query = f"""
-                    SELECT {dim_col}, COUNT(*) as count
-                    FROM complaints_raw
-                    WHERE sr_open_dt = '{target_date.date()}'
-                    GROUP BY {dim_col}
-                """
-                current_df = pl.read_database(current_query, self.engine)
-                
-                if current_df.is_empty():
-                    continue
-                
-                for var_type, delta in comparisons.items():
-                    comparison_date = target_date - delta
-                    
-                    # Fetch comparison period data
-                    comparison_query = f"""
-                        SELECT {dim_col}, COUNT(*) as count
+                # Fetch all necessary dates in range efficiently (Max buffer needed: month + buffer)
+                fetch_start = prev_month_start
+                # Fetch daily counts for the entire period
+                if dim_col.startswith("pl.lit"):
+                    query = f"""
+                        SELECT sr_open_dt, COUNT(*) as count
                         FROM complaints_raw
-                        WHERE sr_open_dt = '{comparison_date.date()}'
-                        GROUP BY {dim_col}
+                        WHERE sr_open_dt BETWEEN '{fetch_start.date()}' AND '{target_date.date()}'
+                        GROUP BY sr_open_dt
                     """
-                    comparison_df = pl.read_database(comparison_query, self.engine)
+                    df = pl.read_database(query, self.engine)
+                    df = df.with_columns(pl.lit("Total").alias("total_col"))
+                    dim_col_effective = "total_col"
+                else:
+                    query = f"""
+                        SELECT sr_open_dt, {dim_col}, COUNT(*) as count
+                        FROM complaints_raw
+                        WHERE sr_open_dt BETWEEN '{fetch_start.date()}' AND '{target_date.date()}'
+                        GROUP BY sr_open_dt, {dim_col}
+                    """
+                    df = pl.read_database(query, self.engine)
+                    dim_col_effective = dim_col
+                
+                if df.is_empty():
+                    continue
+
+                # Get unique dimension keys found for target date
+                active_keys = df.filter(pl.col("sr_open_dt") == pl.lit(target_date.date()))[dim_col_effective].unique().to_list()
+                
+                for key in active_keys:
+                    key_df = df.filter(pl.col(dim_col_effective) == key)
                     
-                    # Join current and comparison data
-                    merged = current_df.join(
-                        comparison_df, 
-                        on=dim_col, 
-                        how="outer",
-                        suffix="_prev"
-                    )
+                    # 1. DOD (Single Day vs Same Day Last week)
+                    curr_val = key_df.filter(pl.col("sr_open_dt") == pl.lit(target_date.date()))["count"].sum()
+                    prev_val_dod = key_df.filter(pl.col("sr_open_dt") == pl.lit(dod_prev_date.date()))["count"].sum()
+                    dod_var = self.calculate_variation(curr_val, prev_val_dod)
                     
-                    # Fill nulls with 0
-                    merged = merged.with_columns([
-                        pl.col("count").fill_null(0),
-                        pl.col("count_prev").fill_null(0)
-                    ])
+                    all_variations.append({
+                        "variation_date": target_date_str, "dimension": dim_name, "dimension_key": str(key),
+                        "current_value": curr_val, "previous_value": prev_val_dod,
+                        "variation_type": "DOD", "variation_percent": dod_var["variation_percent"],
+                        "is_significant": 1 if dod_var["is_significant"] else 0
+                    })
                     
-                    # Calculate variations
-                    for row in merged.to_dicts():
-                        current_val = row.get("count", 0)
-                        previous_val = row.get("count_prev", 0)
-                        
-                        variation = self.calculate_variation(current_val, previous_val)
-                        
-                        all_variations.append({
-                            "variation_date": target_date_str,
-                            "dimension": dim_name,
-                            "dimension_key": str(row[dim_col]),
-                            "current_value": current_val,
-                            "previous_value": previous_val,
-                            "variation_type": var_type,
-                            "variation_percent": variation["variation_percent"],
-                            "is_significant": 1 if variation["is_significant"] else 0
-                        })
+                    # 2. WOW (WTD Average)
+                    wtd_curr_avg = key_df.filter(
+                        (pl.col("sr_open_dt") >= pl.lit(current_week_start.date())) & 
+                        (pl.col("sr_open_dt") <= pl.lit(target_date.date()))
+                    )["count"].mean() or 0
+                    
+                    wtd_prev_avg = key_df.filter(
+                        (pl.col("sr_open_dt") >= pl.lit(prev_week_start.date())) & 
+                        (pl.col("sr_open_dt") <= pl.lit(prev_week_end.date()))
+                    )["count"].mean() or 0
+                    
+                    wow_var = self.calculate_variation(wtd_curr_avg, wtd_prev_avg)
+                    
+                    all_variations.append({
+                        "variation_date": target_date_str, "dimension": dim_name, "dimension_key": str(key),
+                        "current_value": wtd_curr_avg, "previous_value": wtd_prev_avg,
+                        "variation_type": "WOW", "variation_percent": wow_var["variation_percent"],
+                        "is_significant": 1 if wow_var["is_significant"] else 0
+                    })
+                    
+                    # 3. MOM (MTD Average)
+                    mtd_curr_avg = key_df.filter(
+                        (pl.col("sr_open_dt") >= pl.lit(current_month_start.date())) & 
+                        (pl.col("sr_open_dt") <= pl.lit(target_date.date()))
+                    )["count"].mean() or 0
+                    
+                    mtd_prev_avg = key_df.filter(
+                        (pl.col("sr_open_dt") >= pl.lit(prev_month_start.date())) & 
+                        (pl.col("sr_open_dt") <= pl.lit(prev_month_end.date()))
+                    )["count"].mean() or 0
+                    
+                    mom_var = self.calculate_variation(mtd_curr_avg, mtd_prev_avg)
+                    
+                    all_variations.append({
+                        "variation_date": target_date_str, "dimension": dim_name, "dimension_key": str(key),
+                        "current_value": mtd_curr_avg, "previous_value": mtd_prev_avg,
+                        "variation_type": "MOM", "variation_percent": mom_var["variation_percent"],
+                        "is_significant": 1 if mom_var["is_significant"] else 0
+                    })
             
             # Store variations in database
             if all_variations:

@@ -84,7 +84,7 @@ class SurgeHighlighterAgent:
             logger.info(f"Surge analysis complete. Found {len(surges['total'])} total surges, "
                        f"{len(surges['regions'])} regional surges, "
                        f"{len(surges['exchanges'])} exchange surges, "
-                       f"{len(surges['nes'])} NE surges")
+                       f"{len(surges['cities'])} city surges")
             
             return result
             
@@ -126,23 +126,23 @@ class SurgeHighlighterAgent:
         exchanges = {f"{row['region']}|{row['exc_id']}": row['count'] 
                     for row in exchange_df.to_dicts()} if not exchange_df.is_empty() else {}
         
-        # NE (cabinet) counts
-        ne_query = f"""
-            SELECT region, exc_id, cabinet_id, COUNT(*) as count
+        # City counts
+        city_query = f"""
+            SELECT region, exc_id, city, COUNT(*) as count
             FROM complaints_raw
             WHERE sr_open_dt = '{date_str}' 
-            AND region IS NOT NULL AND exc_id IS NOT NULL AND cabinet_id IS NOT NULL
-            GROUP BY region, exc_id, cabinet_id
+            AND region IS NOT NULL AND exc_id IS NOT NULL AND city IS NOT NULL
+            GROUP BY region, exc_id, city
         """
-        ne_df = pl.read_database(ne_query, self.engine)
-        nes = {f"{row['region']}|{row['exc_id']}|{row['cabinet_id']}": row['count'] 
-              for row in ne_df.to_dicts()} if not ne_df.is_empty() else {}
+        city_df = pl.read_database(city_query, self.engine)
+        cities = {f"{row['region']}|{row['exc_id']}|{row['city']}": row['count'] 
+              for row in city_df.to_dicts()} if not city_df.is_empty() else {}
         
         return {
             "total": total_count,
             "regions": regions,
             "exchanges": exchanges,
-            "nes": nes
+            "cities": cities
         }
 
     def _get_mtd_average(self, start_date: datetime, end_date: datetime) -> Dict[str, Any]:
@@ -193,23 +193,23 @@ class SurgeHighlighterAgent:
         exchanges = {f"{row['region']}|{row['exc_id']}": row['avg_count'] 
                     for row in exchange_df.to_dicts()} if not exchange_df.is_empty() else {}
         
-        # NE averages
-        ne_query = f"""
-            SELECT region, exc_id, cabinet_id, COUNT(*) / {days_count} as avg_count
+        # City averages
+        city_query = f"""
+            SELECT region, exc_id, city, COUNT(*) / {days_count} as avg_count
             FROM complaints_raw
             WHERE sr_open_dt BETWEEN '{start_str}' AND '{end_str}' 
-            AND region IS NOT NULL AND exc_id IS NOT NULL AND cabinet_id IS NOT NULL
-            GROUP BY region, exc_id, cabinet_id
+            AND region IS NOT NULL AND exc_id IS NOT NULL AND city IS NOT NULL
+            GROUP BY region, exc_id, city
         """
-        ne_df = pl.read_database(ne_query, self.engine)
-        nes = {f"{row['region']}|{row['exc_id']}|{row['cabinet_id']}": row['avg_count'] 
-              for row in ne_df.to_dicts()} if not ne_df.is_empty() else {}
+        city_df = pl.read_database(city_query, self.engine)
+        cities = {f"{row['region']}|{row['exc_id']}|{row['city']}": row['avg_count'] 
+              for row in city_df.to_dicts()} if not city_df.is_empty() else {}
         
         return {
             "total": total_avg,
             "regions": regions,
             "exchanges": exchanges,
-            "nes": nes
+            "cities": cities
         }
 
     def _calculate_surge(self, current: float, comparison: float) -> Dict[str, Any]:
@@ -236,7 +236,7 @@ class SurgeHighlighterAgent:
             "total": [],
             "regions": [],
             "exchanges": [],
-            "nes": []
+            "cities": []
         }
         
         # Check total
@@ -291,26 +291,26 @@ class SurgeHighlighterAgent:
             if surge:
                 surges['exchanges'].append(surge)
         
-        # Check NEs
-        for ne_key, count in target_data['nes'].items():
+        # Check Cities
+        for city_key, count in target_data['cities'].items():
             if count < 5:
                 continue
-            region, exc_id, cabinet_id = ne_key.split('|')
-            last_week_count = last_week_data['nes'].get(ne_key, 0)
-            mtd_avg_count = mtd_avg_data['nes'].get(ne_key, 0)
+            region, exc_id, city = city_key.split('|')
+            last_week_count = last_week_data['cities'].get(city_key, 0)
+            mtd_avg_count = mtd_avg_data['cities'].get(city_key, 0)
             
             surge = self._check_surge(
-                cabinet_id,
+                city,
                 count,
                 last_week_count,
                 mtd_avg_count,
                 alarming_threshold,
                 critical_threshold,
-                level="NE",
+                level="City",
                 parent=f"{region} > {exc_id}"
             )
             if surge:
-                surges['nes'].append(surge)
+                surges['cities'].append(surge)
         
         return surges
 

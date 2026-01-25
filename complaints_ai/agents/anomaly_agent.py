@@ -25,7 +25,7 @@ class AnomalyAgent:
             "Type": "sr_type",
             "Region": "region",
             "Exchange": "exc_id",
-            "OLT": "olt_id",
+            "City": "city",
             "RCA": "rca"
         }
 
@@ -57,7 +57,7 @@ class AnomalyAgent:
         try:
             # 1. Fetch current data for the entire day
             query = f"""
-                SELECT sr_type, region, exc_id, olt_id, rca
+                SELECT sr_type, region, exc_id, city, rca
                 FROM complaints_raw
                 WHERE sr_open_dt = '{target_date_str}'
             """

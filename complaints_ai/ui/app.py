@@ -1,5 +1,7 @@
 import streamlit as st
+from sqlalchemy import text
 import pandas as pd
+import plotly.express as px
 import polars as pl
 from datetime import datetime, date, timedelta
 import time
@@ -14,6 +16,8 @@ from complaints_ai.db.models import DailyAnomalies, DailyTrends, DailyVariations
 from complaints_ai.orchestrator import Orchestrator
 from complaints_ai.agents.trend_plotter_agent import TrendPlotterAgent
 from complaints_ai.agents.surge_highlighter_agent import SurgeHighlighterAgent
+from complaints_ai.agents.repeat_highlighter_agent import RepeatHighlighterAgent
+from complaints_ai.ui.plotly_utils import create_area_chart, create_multi_line_chart, COLORS
 
 # Config
 st.set_page_config(
@@ -36,58 +40,67 @@ def get_trend_plotter():
 def get_surge_highlighter():
     return SurgeHighlighterAgent()
 
+@st.cache_resource
+def get_repeat_highlighter():
+    return RepeatHighlighterAgent()
+
 orchestrator = get_orchestrator()
 trend_plotter = get_trend_plotter()
 surge_highlighter = get_surge_highlighter()
+repeat_highlighter = get_repeat_highlighter()
 engine = get_engine()
 
 # Helper function to display surge cards
 def _display_surge_card(surge, st_module):
-    """Display a surge as a colored card."""
-    severity_color = "red" if surge['severity'] == 'CRITICAL' else "orange"
-    severity_emoji = "🔴" if surge['severity'] == 'CRITICAL' else "🟠"
+    """Display a surge as a premium styled card."""
+    severity = surge['severity']
+    border_color = "#e74c3c" if severity == 'CRITICAL' else "#f39c12"
+    bg_color = "rgba(231, 76, 60, 0.05)" if severity == 'CRITICAL' else "rgba(243, 156, 18, 0.05)"
+    emoji = "🔴" if severity == 'CRITICAL' else "🟠"
     
-    with st_module.container():
-        if surge['severity'] == 'CRITICAL':
-            st_module.error(f"### {severity_emoji} {surge['name']}")
-        else:
-            st_module.warning(f"### {severity_emoji} {surge['name']}")
-        
-        if 'parent' in surge:
-            st_module.caption(f"📍 Location: {surge['parent']}")
-        
-        col1, col2, col3 = st_module.columns(3)
-        
-        with col1:
-            st_module.metric(
-                "Current Count",
-                surge['current_count'],
-                delta=None
-            )
-        
-        with col2:
-            st_module.metric(
-                "vs MTD Average",
-                f"{surge['mtd_surge_percent']:+.1f}%",
-                delta=f"{surge['mtd_surge_increase']:+.1f}",
-                delta_color="inverse"
-            )
-            st_module.caption(f"MTD Avg: {surge['mtd_avg']:.1f}")
-        
-        with col3:
-            st_module.metric(
-                "vs Last Week",
-                f"{surge['wow_surge_percent']:+.1f}%",
-                delta=f"{surge['wow_surge_increase']:+.1f}",
-                delta_color="inverse"
-            )
-            st_module.caption(f"Last Week: {surge['last_week_count']}")
-        
-        st_module.markdown("---")
+    card_html = f"""
+    <div style="
+        border-left: 5px solid {border_color};
+        background-color: {bg_color};
+        padding: 15px;
+        border-radius: 8px;
+        margin-bottom: 20px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    ">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0; color: {border_color}; font-family: 'Inter', sans-serif;">{emoji} {surge['name']}</h3>
+            <span style="
+                background-color: {border_color};
+                color: white;
+                padding: 2px 10px;
+                border-radius: 20px;
+                font-size: 0.8rem;
+                font-weight: bold;
+            ">{severity}</span>
+        </div>
+        <p style="margin: 5px 0; color: #666; font-size: 0.9rem;">📍 Location: {surge.get('parent', 'All Regions')}</p>
+        <hr style="border: 0; border-top: 1px solid rgba(0,0,0,0.1); margin: 10px 0;">
+        <div style="display: flex; justify-content: space-around; text-align: center;">
+            <div>
+                <div style="font-size: 0.8rem; color: #888;">Current</div>
+                <div style="font-size: 1.2rem; font-weight: bold;">{surge['current_count']}</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8rem; color: #888;">vs MTD</div>
+                <div style="font-size: 1.2rem; font-weight: bold; color: {border_color};">+{surge['mtd_surge_percent']}%</div>
+            </div>
+            <div>
+                <div style="font-size: 0.8rem; color: #888;">vs Last Week</div>
+                <div style="font-size: 1.2rem; font-weight: bold; color: {border_color};">+{surge['wow_surge_percent']}%</div>
+            </div>
+        </div>
+    </div>
+    """
+    st_module.markdown(card_html, unsafe_allow_html=True)
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotter", "Surge Highlighter", "Executive Insights"])
+page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotter", "Surge Highlighter", "Repeat Analysis", "Executive Insights"])
 
 st.sidebar.markdown("---")
 st.sidebar.info("System Status: **Active** (Daily Analysis Mode)")
@@ -232,13 +245,16 @@ elif page == "Daily Dashboard":
         trend_df = pd.read_sql(q_trend, engine)
         if not trend_df.empty:
             trend_df['sr_open_dt'] = pd.to_datetime(trend_df['sr_open_dt'])
-            st.line_chart(trend_df.set_index('sr_open_dt'))
+            
+            # Plotly Infographic Style Line Chart
+            fig = create_area_chart(trend_df, 'sr_open_dt', 'count', "Complaints Volume Trend")
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No data for trend.")
 
     with c2:
         # Pie Chart: Anomaly Distribution
-        st.subheader("Anomaly Breakdown by Type")
+        st.subheader("Anomaly Breakdown")
         q_pie = f"""
             SELECT dimension, count(*) as cnt 
             FROM daily_anomalies 
@@ -247,69 +263,104 @@ elif page == "Daily Dashboard":
         """
         pie_df = pd.read_sql(q_pie, engine)
         if not pie_df.empty:
-            st.dataframe(pie_df, hide_index=True)
+            fig_pie = px.pie(
+                pie_df, 
+                values='cnt', 
+                names='dimension',
+                hole=0.4,
+                template="plotly_white",
+                color_discrete_sequence=px.colors.qualitative.Pastel
+            )
+            fig_pie.update_layout(
+                margin=dict(l=0, r=0, t=0, b=0),
+                height=300,
+                showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
         else:
-            st.write("No anomalies.")
+            st.info("No anomalies recorded.")
 
     # Variations Section
     st.markdown("---")
     st.subheader("📈 Daily Variations")
     
-    col1, col2, col3 = st.columns(3)
+    # Query Total Company Variations
+    q_total_vars = f"""
+        SELECT variation_type, current_value, previous_value, variation_percent
+        FROM daily_variations 
+        WHERE variation_date = '{target_date}' AND dimension = 'Total'
+    """
+    total_vars_df = pd.read_sql(q_total_vars, engine)
     
-    with col1:
+    v_col1, v_col2, v_col3 = st.columns(3)
+    
+    def get_var_data(vtype):
+        if total_vars_df.empty: return None
+        row = total_vars_df[total_vars_df['variation_type'] == vtype]
+        if row.empty: return None
+        return row.iloc[0]
+
+    with v_col1:
         st.markdown("**Day-over-Day (DoD)**")
-        q_dod = f"""
-            SELECT dimension_key, variation_percent 
-            FROM daily_variations 
-            WHERE variation_date = '{target_date}' AND variation_type = 'DOD'
-            AND is_significant = 1
-            ORDER BY ABS(variation_percent) DESC
-            LIMIT 5
-        """
-        dod_df = pd.read_sql(q_dod, engine)
-        if not dod_df.empty:
-            for _, row in dod_df.iterrows():
-                delta = f"{row['variation_percent']:+.1f}%"
-                st.metric(row['dimension_key'], delta, delta)
+        st.caption("Target Date vs Same Day Last Week")
+        data = get_var_data('DOD')
+        if data is not None:
+            st.metric(
+                "Current Count", 
+                f"{data['current_value']:.0f}", 
+                f"{data['variation_percent']:+.1f}%",
+                delta_color="inverse"
+            )
+            st.markdown(f"<small>Previous: {data['previous_value']:.0f}</small>", unsafe_allow_html=True)
         else:
-            st.info("No significant DoD variations")
+            st.info("No DoD data")
     
-    with col2:
+    with v_col2:
         st.markdown("**Week-over-Week (WoW)**")
-        q_wow = f"""
-            SELECT dimension_key, variation_percent 
-            FROM daily_variations 
-            WHERE variation_date = '{target_date}' AND variation_type = 'WOW'
-            AND is_significant = 1
-            ORDER BY ABS(variation_percent) DESC
-            LIMIT 5
-        """
-        wow_df = pd.read_sql(q_wow, engine)
-        if not wow_df.empty:
-            for _, row in wow_df.iterrows():
-                delta = f"{row['variation_percent']:+.1f}%"
-                st.metric(row['dimension_key'], delta, delta)
+        st.caption("WTD Avg vs Prev Week Avg")
+        data = get_var_data('WOW')
+        if data is not None:
+            st.metric(
+                "WTD Average", 
+                f"{data['current_value']:.1f}", 
+                f"{data['variation_percent']:+.1f}%",
+                delta_color="inverse"
+            )
+            st.markdown(f"<small>Prev WTD Avg: {data['previous_value']:.1f}</small>", unsafe_allow_html=True)
         else:
-            st.info("No significant WoW variations")
+            st.info("No WoW data")
     
-    with col3:
+    with v_col3:
         st.markdown("**Month-over-Month (MoM)**")
-        q_mom = f"""
-            SELECT dimension_key, variation_percent 
-            FROM daily_variations 
-            WHERE variation_date = '{target_date}' AND variation_type = 'MOM'
-            AND is_significant = 1
-            ORDER BY ABS(variation_percent) DESC
-            LIMIT 5
-        """
-        mom_df = pd.read_sql(q_mom, engine)
-        if not mom_df.empty:
-            for _, row in mom_df.iterrows():
-                delta = f"{row['variation_percent']:+.1f}%"
-                st.metric(row['dimension_key'], delta, delta)
+        st.caption("MTD Avg vs Prev Month Avg")
+        data = get_var_data('MOM')
+        if data is not None:
+            st.metric(
+                "MTD Average", 
+                f"{data['current_value']:.1f}", 
+                f"{data['variation_percent']:+.1f}%",
+                delta_color="inverse"
+            )
+            st.markdown(f"<small>Prev MTD Avg: {data['previous_value']:.1f}</small>", unsafe_allow_html=True)
         else:
-            st.info("No significant MoM variations")
+            st.info("No MoM data")
+
+    # Significant Dimension-wise Variations (Show only top 5 significant across all types)
+    st.markdown("### Top Significant Variations by Dimension")
+    q_sig_vars = f"""
+        SELECT dimension, dimension_key, variation_type, variation_percent 
+        FROM daily_variations 
+        WHERE variation_date = '{target_date}' AND dimension != 'Total'
+        AND is_significant = 1
+        ORDER BY ABS(variation_percent) DESC
+        LIMIT 5
+    """
+    sig_vars_df = pd.read_sql(q_sig_vars, engine)
+    if not sig_vars_df.empty:
+        st.dataframe(sig_vars_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No significant dimension variations detected.")
 
     # Trends Section
     st.markdown("---")
@@ -386,7 +437,7 @@ elif page == "Trend Plotter":
         st.success(f"Loaded data from {trend_data['start_date']} to {trend_data['end_date']}")
         
         # Tab layout for different views
-        tab1, tab2, tab3, tab4 = st.tabs(["📊 Total & Regional", "🏢 Exchange & NE", "📋 SR Sub-Type", "🔍 RCA Analysis"])
+        tab1, tab2, tab3, tab4 = st.tabs(["📊 Total & Regional", "🏢 Exchange & City", "📋 SR Sub-Type", "🔍 RCA Analysis"])
         
         # --- Tab 1: Total & Regional ---
         with tab1:
@@ -397,7 +448,8 @@ elif page == "Trend Plotter":
                 total_df = pd.DataFrame(trend_data['total_trend'])
                 total_df['date'] = pd.to_datetime(total_df['date'])
                 
-                st.line_chart(total_df.set_index('date')['count'], use_container_width=True)
+                fig_total = create_area_chart(total_df, 'date', 'count', "")
+                st.plotly_chart(fig_total, use_container_width=True)
                 
                 # Show statistics
                 col1, col2, col3 = st.columns(3)
@@ -433,14 +485,15 @@ elif page == "Trend Plotter":
                         else:
                             region_chart_data = region_chart_data.join(region_df, how='outer')
                     
-                    region_chart_data = region_chart_data.fillna(0)
-                    st.line_chart(region_chart_data, use_container_width=True)
+                    region_chart_data = region_chart_data.fillna(0).reset_index()
+                    fig_region = create_multi_line_chart(region_chart_data, 'date', selected_regions, "Comparison by Region")
+                    st.plotly_chart(fig_region, use_container_width=True)
                 else:
                     st.info("Select at least one region to display.")
             else:
                 st.info("No regional data available.")
         
-        # --- Tab 2: Exchange & NE ---
+        # --- Tab 2: Exchange & City ---
         with tab2:
             st.subheader("Exchange-wise Trends (Hierarchical Drill-down)")
             
@@ -471,50 +524,52 @@ elif page == "Trend Plotter":
                             else:
                                 exchange_chart_data = exchange_chart_data.join(exchange_df, how='outer')
                         
-                        exchange_chart_data = exchange_chart_data.fillna(0)
-                        st.line_chart(exchange_chart_data, use_container_width=True)
+                        exchange_chart_data = exchange_chart_data.fillna(0).reset_index()
+                        fig_exc = create_multi_line_chart(exchange_chart_data, 'date', selected_exchanges, f"Exchanges in {selected_region}")
+                        st.plotly_chart(fig_exc, use_container_width=True)
                     else:
                         st.info("Select at least one exchange to display.")
                 
                 st.markdown("---")
-                st.subheader("Network Element (NE) Trends")
+                st.subheader("City-wise Trends")
                 
-                if trend_data['ne_trend'] and selected_region:
-                    if selected_region in trend_data['ne_trend']:
-                        # Exchange selector for NE view
-                        exchanges_with_ne = list(trend_data['ne_trend'][selected_region].keys())
-                        selected_exchange_ne = st.selectbox("Select Exchange for NE View", exchanges_with_ne)
+                if trend_data['city_trend'] and selected_region:
+                    if selected_region in trend_data['city_trend']:
+                        # Exchange selector for City view
+                        exchanges_with_city = list(trend_data['city_trend'][selected_region].keys())
+                        selected_exchange_city = st.selectbox("Select Exchange for City View", exchanges_with_city)
                         
-                        if selected_exchange_ne:
-                            nes = list(trend_data['ne_trend'][selected_region][selected_exchange_ne].keys())
-                            selected_nes = st.multiselect(
-                                f"Select NEs in {selected_exchange_ne}",
-                                nes,
-                                default=nes[:5] if len(nes) > 5 else nes
+                        if selected_exchange_city:
+                            cities = list(trend_data['city_trend'][selected_region][selected_exchange_city].keys())
+                            selected_cities = st.multiselect(
+                                f"Select Cities in {selected_exchange_city}",
+                                cities,
+                                default=cities[:5] if len(cities) > 5 else cities
                             )
                             
-                            if selected_nes:
-                                # Prepare NE chart data
-                                ne_chart_data = pd.DataFrame()
-                                for ne in selected_nes:
-                                    ne_df = pd.DataFrame(trend_data['ne_trend'][selected_region][selected_exchange_ne][ne])
-                                    ne_df['date'] = pd.to_datetime(ne_df['date'])
-                                    ne_df = ne_df.set_index('date')
-                                    ne_df = ne_df.rename(columns={'count': ne})
+                            if selected_cities:
+                                # Prepare City chart data
+                                city_chart_data = pd.DataFrame()
+                                for city in selected_cities:
+                                    city_df = pd.DataFrame(trend_data['city_trend'][selected_region][selected_exchange_city][city])
+                                    city_df['date'] = pd.to_datetime(city_df['date'])
+                                    city_df = city_df.set_index('date')
+                                    city_df = city_df.rename(columns={'count': city})
                                     
-                                    if ne_chart_data.empty:
-                                        ne_chart_data = ne_df
+                                    if city_chart_data.empty:
+                                        city_chart_data = city_df
                                     else:
-                                        ne_chart_data = ne_chart_data.join(ne_df, how='outer')
+                                        city_chart_data = city_chart_data.join(city_df, how='outer')
                                 
-                                ne_chart_data = ne_chart_data.fillna(0)
-                                st.line_chart(ne_chart_data, use_container_width=True)
+                                city_chart_data = city_chart_data.fillna(0).reset_index()
+                                fig_city = create_multi_line_chart(city_chart_data, 'date', selected_cities, f"Cities in {selected_exchange_city}")
+                                st.plotly_chart(fig_city, use_container_width=True)
                             else:
-                                st.info("Select at least one NE to display.")
+                                st.info("Select at least one City to display.")
                     else:
-                        st.info("No NE data available for selected region.")
+                        st.info("No City data available for selected region.")
             else:
-                st.info("No exchange/NE data available.")
+                st.info("No exchange/City data available.")
         
         # --- Tab 3: SR Sub-Type ---
         with tab3:
@@ -542,8 +597,9 @@ elif page == "Trend Plotter":
                         else:
                             subtype_chart_data = subtype_chart_data.join(subtype_df, how='outer')
                     
-                    subtype_chart_data = subtype_chart_data.fillna(0)
-                    st.line_chart(subtype_chart_data, use_container_width=True)
+                    subtype_chart_data = subtype_chart_data.fillna(0).reset_index()
+                    fig_subtype = create_multi_line_chart(subtype_chart_data, 'date', selected_subtypes, "SR Sub-Type Historical")
+                    st.plotly_chart(fig_subtype, use_container_width=True)
                     
                     # Show top sub-types table
                     st.markdown("### Top SR Sub-Types (Total Count)")
@@ -559,14 +615,14 @@ elif page == "Trend Plotter":
             else:
                 st.info("No SR sub-type data available.")
         
-        # --- Tab 4: RCA Analysis ---
+        # --- Tab 4: RCA Sub-Type Analysis ---
         with tab4:
-            st.subheader("RCA (Root Cause Analysis) Trends")
+            st.subheader("RCA_Sub_type Trends")
             
-            if trend_data['rca_trend']:
-                rcas = list(trend_data['rca_trend'].keys())
+            if trend_data.get('rca_subtype_trend'):
+                rcas = list(trend_data['rca_subtype_trend'].keys())
                 selected_rcas = st.multiselect(
-                    "Select RCAs to Display",
+                    "Select RCA_Sub_types to Display",
                     rcas,
                     default=rcas[:5] if len(rcas) > 5 else rcas
                 )
@@ -575,7 +631,7 @@ elif page == "Trend Plotter":
                     # Prepare RCA chart data
                     rca_chart_data = pd.DataFrame()
                     for rca in selected_rcas:
-                        rca_df = pd.DataFrame(trend_data['rca_trend'][rca])
+                        rca_df = pd.DataFrame(trend_data['rca_subtype_trend'][rca])
                         rca_df['date'] = pd.to_datetime(rca_df['date'])
                         rca_df = rca_df.set_index('date')
                         rca_df = rca_df.rename(columns={'count': rca})
@@ -585,15 +641,16 @@ elif page == "Trend Plotter":
                         else:
                             rca_chart_data = rca_chart_data.join(rca_df, how='outer')
                     
-                    rca_chart_data = rca_chart_data.fillna(0)
-                    st.line_chart(rca_chart_data, use_container_width=True)
+                    rca_chart_data = rca_chart_data.fillna(0).reset_index()
+                    fig_rca = create_multi_line_chart(rca_chart_data, 'date', selected_rcas, "RCA_Sub_type Historical Trends")
+                    st.plotly_chart(fig_rca, use_container_width=True)
                     
                     # Show top RCAs table
-                    st.markdown("### Top RCAs (Total Count)")
+                    st.markdown("### Top RCA_Sub_types (Total Count)")
                     rca_totals = []
                     for rca in selected_rcas:
-                        total = sum([row['count'] for row in trend_data['rca_trend'][rca]])
-                        rca_totals.append({"RCA": rca, "Total Count": total})
+                        total = sum([row['count'] for row in trend_data['rca_subtype_trend'][rca]])
+                        rca_totals.append({"RCA_Sub_type": rca, "Total Count": total})
                     
                     rca_totals_df = pd.DataFrame(rca_totals).sort_values('Total Count', ascending=False)
                     st.dataframe(rca_totals_df, use_container_width=True, hide_index=True)
@@ -640,7 +697,7 @@ elif page == "Surge Highlighter":
             all_surges = (surge_data['surges']['total'] + 
                          surge_data['surges']['regions'] + 
                          surge_data['surges']['exchanges'] + 
-                         surge_data['surges']['nes'])
+                         surge_data['surges']['cities'])
             
             critical_count = sum(1 for s in all_surges if s['severity'] == 'CRITICAL')
             alarming_count = sum(1 for s in all_surges if s['severity'] == 'ALARMING')
@@ -657,7 +714,7 @@ elif page == "Surge Highlighter":
                 st.success("🎉 No surges detected! All complaint levels are within normal range.")
             else:
                 # Display surges in tabs
-                tab1, tab2, tab3, tab4 = st.tabs(["📊 Total", "🌍 Regions", "🏢 Exchanges", "📡 Network Elements"])
+                tab1, tab2, tab3, tab4 = st.tabs(["📊 Total", "🌍 Regions", "🏢 Exchanges", "🏙️ Cities"])
                 
                 # --- Tab 1: Total ---
                 with tab1:
@@ -700,21 +757,21 @@ elif page == "Surge Highlighter":
                     else:
                         st.info("No surges detected at exchange level.")
                 
-                # --- Tab 4: NEs ---
+                # --- Tab 4: Cities ---
                 with tab4:
-                    if surge_data['surges']['nes']:
-                        st.subheader(f"Network Element Surges ({len(surge_data['surges']['nes'])} detected)")
+                    if surge_data['surges']['cities']:
+                        st.subheader(f"City Surges ({len(surge_data['surges']['cities'])} detected)")
                         
                         # Sort by severity and max surge percent
-                        sorted_nes = sorted(
-                            surge_data['surges']['nes'],
+                        sorted_cities = sorted(
+                            surge_data['surges']['cities'],
                             key=lambda x: (0 if x['severity'] == 'CRITICAL' else 1, -x['max_surge_percent'])
                         )
                         
-                        for surge in sorted_nes:
+                        for surge in sorted_cities:
                             _display_surge_card(surge, st)
                     else:
-                        st.info("No surges detected at NE level.")
+                        st.info("No surges detected at City level.")
                 
                 # Detailed table view
                 st.markdown("---")
@@ -752,7 +809,195 @@ elif page == "Surge Highlighter":
                     st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
 
-# --- Page 5: Executive Insights ---
+# --- Page 5: Repeat Analysis ---
+elif page == "Repeat Analysis":
+    st.title("🔄 Repeat Highlighter - MDN Frequency Analysis")
+    st.markdown("Track frequency of complaints from the same MDN within a rolling 30-day window.")
+    
+    # Date selection
+    target_date = st.date_input("Target Date", date.today() - timedelta(days=1))
+    
+    if st.button("🔍 Analyze Repeaters", type="primary"):
+        with st.spinner("Analyzing MDN repetitions..."):
+            repeat_data = repeat_highlighter.run({
+                "target_date": str(target_date)
+            })
+        
+        if repeat_data['status'] != 'success':
+            st.error(f"Failed to analyze repeats: {repeat_data.get('message', 'Unknown error')}")
+        else:
+            st.success(f"✅ Analysis for 30-day period: {repeat_data['period']}")
+            
+            # KPI Row
+            st.subheader("📊 Repetition Summary")
+            kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+            kpi1.metric("Total Repeaters", repeat_data['total_repeaters'])
+            
+            # Get summaries safely
+            summaries = repeat_data.get('summaries', {})
+            
+            # Get severity counts
+            sev_data = summaries.get('severity', [])
+            sev_counts = {s['severity']: s['count'] for s in sev_data}
+            critical_total = sev_counts.get('CRITICAL', 0) + sev_counts.get('VERY ALARMING', 0)
+            kpi2.metric("Critical (>6)", critical_total, delta_color="inverse")
+            kpi3.metric("Very Alarming (>10)", sev_counts.get('VERY ALARMING', 0), delta_color="inverse")
+            
+            subtype_overall = summaries.get('subtype_overall', [])
+            top_subtype = subtype_overall[0].get('SR_Sub_Type', "N/A") if subtype_overall else "N/A"
+            kpi4.metric("Top Repeat Sub-Type", top_subtype)
+            
+            st.markdown("---")
+            
+            # Tabs for different repeat perspectives
+            tab1, tab2, tab3, tab4 = st.tabs(["🌎 Regional & Severity", "🏢 Exchange & City", "📋 SR Sub-Type Insights", "🔍 Detailed List"])
+            
+            with tab1:
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.subheader("Severity Distribution")
+                    sev_list = summaries.get('severity', [])
+                    if sev_list:
+                        sev_df = pd.DataFrame(sev_list)
+                        fig_sev = px.pie(
+                            sev_df, values='count', names='severity',
+                            hole=0.4,
+                            color='severity',
+                            color_discrete_map={
+                                'VERY ALARMING': '#d62728',
+                                'CRITICAL': '#ff7f0e',
+                                'ALARMING': '#ffbb78',
+                                'NORMAL REPEAT': '#1f77b4'
+                            },
+                            template="plotly_white"
+                        )
+                        st.plotly_chart(fig_sev, use_container_width=True)
+                
+                with c2:
+                    st.subheader("Regional Repeats")
+                    reg_list = summaries.get('regional', [])
+                    if reg_list:
+                        reg_df = pd.DataFrame(reg_list)
+                        fig_reg = px.bar(
+                            reg_df.sort_values('count', ascending=False),
+                            x='region', y='count',
+                            template="plotly_white",
+                            color_discrete_sequence=['#1f77b4']
+                        )
+                        st.plotly_chart(fig_reg, use_container_width=True)
+
+            with tab2:
+                st.subheader("Exchange & City Level Repeats")
+                col_e1, col_e2 = st.columns(2)
+                
+                with col_e1:
+                    st.markdown("**Top 10 Exchanges (by Repeats)**")
+                    exc_list = summaries.get('exchange', [])
+                    if exc_list:
+                        exc_df = pd.DataFrame(exc_list)
+                        fig_exc = px.bar(
+                            exc_df.sort_values('count', ascending=False).head(10),
+                            x='exc_id', y='count',
+                            template="plotly_white",
+                            color_discrete_sequence=['#ff7f0e']
+                        )
+                        st.plotly_chart(fig_exc, use_container_width=True)
+                
+                with col_e2:
+                    st.markdown("**Top 10 Cities (by Repeats)**")
+                    city_list = summaries.get('city', [])
+                    if city_list:
+                        city_df = pd.DataFrame(city_list)
+                        fig_city = px.bar(
+                            city_df.sort_values('count', ascending=False).head(10),
+                            x='city', y='count',
+                            template="plotly_white",
+                            color_discrete_sequence=['#2ca02c']
+                        )
+                        st.plotly_chart(fig_city, use_container_width=True)
+
+            with tab3:
+                st.subheader("SR Sub-Type Repeat Analysis")
+                st.markdown("Identifying which types of complaints are most frequently repeated.")
+                
+                # Overall Sub-Type Pie
+                subtype_list = summaries.get('subtype_overall', [])
+                if subtype_list:
+                    sub_df = pd.DataFrame(subtype_list)
+                    # Check if SR_Sub_Type is in columns to avoid KeyError
+                    if 'SR_Sub_Type' in sub_df.columns:
+                        fig_sub = px.bar(
+                            sub_df.head(10), 
+                            x='count', y='SR_Sub_Type',
+                            orientation='h',
+                            title="Top Repeated SR Sub-Types (Overall)",
+                            template="plotly_white",
+                            color='count',
+                            color_continuous_scale=px.colors.sequential.Blues
+                        )
+                        fig_sub.update_layout(yaxis={'categoryorder':'total ascending'})
+                        st.plotly_chart(fig_sub, use_container_width=True)
+                    else:
+                        st.info("No sub-type data available for chart.")
+                
+                st.markdown("---")
+                st.markdown("**Hierarchical Sub-Type Repeats**")
+                
+                sel_dim = st.selectbox("View Sub-Type Repeats by:", ["Region", "Exchange", "City"])
+                
+                if sel_dim == "Region":
+                    data = summaries.get('regional_subtype', [])
+                    key = "region"
+                elif sel_dim == "Exchange":
+                    data = summaries.get('exchange_subtype', [])
+                    key = "exc_id"
+                else:
+                    data = summaries.get('city_subtype', [])
+                    key = "city"
+                
+                if data:
+                    hier_df = pd.DataFrame(data)
+                    # Filter top 20 rows for readability
+                    if 'SR_Sub_Type' in hier_df.columns:
+                        fig_hier = px.bar(
+                            hier_df.sort_values('count', ascending=False).head(20),
+                            x=key, y='count', color='SR_Sub_Type',
+                            barmode='stack',
+                            title=f"Repeats by {sel_dim} and Sub-Type",
+                            template="plotly_white"
+                        )
+                        st.plotly_chart(fig_hier, use_container_width=True)
+                    else:
+                        st.info("No sub-type breakdown available.")
+
+            with tab4:
+                st.subheader("📋 Detailed Repeater List")
+                if repeat_data['top_repeaters']:
+                    df_repeaters = pd.DataFrame(repeat_data['top_repeaters'])
+                    # Ensure all required columns exist before indexing
+                    required_cols = ['mdn', 'repeat_count', 'severity', 'SR_Sub_Type', 'region', 'exc_id', 'cabinet_id']
+                    available_cols = [col for col in required_cols if col in df_repeaters.columns]
+                    
+                    display_df = df_repeaters[available_cols]
+                    display_df = display_df.rename(columns={
+                        'mdn': 'MDN', 'repeat_count': 'Count', 'severity': 'Severity',
+                        'SR_Sub_Type': 'Top Sub-Type', 'region': 'Region',
+                        'exc_id': 'Exchange', 'city': 'City'
+                    })
+                    
+                    def color_sev(val):
+                        if val == 'VERY ALARMING': return 'background-color: #ffcccc; color: #990000; font-weight: bold'
+                        if val == 'CRITICAL': return 'background-color: #ffe5cc; color: #994c00; font-weight: bold'
+                        if val == 'ALARMING': return 'background-color: #ffffcc; color: #999900; font-weight: bold'
+                        return ''
+                    
+                    st.dataframe(
+                        display_df.style.applymap(color_sev, subset=['Severity']),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+# --- Page 6: Executive Insights ---
 elif page == "Executive Insights":
     st.title("📑 Executive Insights")
     

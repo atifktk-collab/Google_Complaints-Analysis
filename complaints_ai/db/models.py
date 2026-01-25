@@ -6,8 +6,8 @@ Base = declarative_base()
 class ComplaintsRaw(Base):
     __tablename__ = 'complaints_raw'
     
-    sr_row_id = Column(String(50), primary_key=True)
-    sr_number = Column(String(50), index=True)
+    sr_number = Column(String(50), primary_key=True)
+    sr_row_id = Column(String(50), index=True)
     mdn = Column(String(50))
     region_id = Column(String(50))
     sr_open_dt = Column(Date)
@@ -50,7 +50,7 @@ class DailyAnomalies(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     anomaly_date = Column(Date, nullable=False, index=True)
-    dimension = Column(Enum('Type', 'Region', 'Exchange', 'OLT', 'RCA', name='dim_enum'), nullable=False)
+    dimension = Column(Enum('Type', 'Region', 'Exchange', 'City', 'RCA', 'Total', name='dim_enum'), nullable=False)
     dimension_key = Column(String(200), nullable=False)
     metric_value = Column(Float, nullable=False)
     baseline_avg = Column(Float, nullable=False)
@@ -64,7 +64,7 @@ class DailyTrends(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     trend_date = Column(Date, nullable=False, index=True)
-    dimension = Column(Enum('Type', 'Region', 'Exchange', 'OLT', 'RCA', name='dim_enum'), nullable=False)
+    dimension = Column(Enum('Type', 'Region', 'Exchange', 'City', 'RCA', 'Total', name='dim_enum'), nullable=False)
     dimension_key = Column(String(200), nullable=False)
     metric_value = Column(Float, nullable=False)
     trend_direction = Column(Enum('UP', 'DOWN', 'STABLE', name='trend_dir_enum'), nullable=False)
@@ -77,7 +77,7 @@ class DailyVariations(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     variation_date = Column(Date, nullable=False, index=True)
-    dimension = Column(Enum('Type', 'Region', 'Exchange', 'OLT', 'RCA', name='dim_enum'), nullable=False)
+    dimension = Column(Enum('Type', 'Region', 'Exchange', 'City', 'RCA', 'Total', name='dim_enum'), nullable=False)
     dimension_key = Column(String(200), nullable=False)
     current_value = Column(Float, nullable=False)
     previous_value = Column(Float, nullable=False)

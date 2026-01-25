@@ -14,6 +14,7 @@ from complaints_ai.agents.correlation_agent import CorrelationAgent
 from complaints_ai.agents.rca_agent import RCAAgent
 from complaints_ai.agents.severity_agent import SeverityAgent
 from complaints_ai.agents.narrator_agent import NarratorAgent
+from complaints_ai.agents.repeat_highlighter_agent import RepeatHighlighterAgent
 from complaints_ai.db.mysql import init_db
 
 # Configure global logging
@@ -36,6 +37,7 @@ class Orchestrator:
         self.rca_agent = RCAAgent()
         self.severity_agent = SeverityAgent()
         self.narrator_agent = NarratorAgent()
+        self.repeat_highlighter_agent = RepeatHighlighterAgent()
         
         # Ensure DB is ready
         init_db()
@@ -108,6 +110,10 @@ class Orchestrator:
                 self.narrator_agent.run({"target_date": target_date})
             else:
                 logger.info("No anomalies detected, skipping correlation/RCA/severity/narrator agents.")
+            
+            # 11. Repeat Analysis (Always run for the target date)
+            logger.info(f"Step 11: Repeat MDN Analysis for {target_date}")
+            self.repeat_highlighter_agent.run({"target_date": target_date})
         
         logger.info("Daily Pipeline Execution Complete")
         

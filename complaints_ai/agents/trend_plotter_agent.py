@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class TrendPlotterAgent:
     """
     Agent responsible for generating date-wise trend data for the last 30 days.
-    Provides hierarchical drill-down: Total -> Region -> Exchange -> NE
+    Provides hierarchical drill-down: Total -> Region -> Exchange -> City
     Also provides SR Sub-type and RCA trend analysis.
     """
     
@@ -47,14 +47,14 @@ class TrendPlotterAgent:
             # 3. Exchange-wise Count (per region)
             exchange_trend = self._get_exchange_trend(start_date, target_date)
             
-            # 4. NE (Network Element) Count (per exchange)
-            ne_trend = self._get_ne_trend(start_date, target_date)
+            # 4. City-wise Count (per exchange)
+            city_trend = self._get_city_trend(start_date, target_date)
             
             # 5. SR Sub-type wise Count
             sr_subtype_trend = self._get_sr_subtype_trend(start_date, target_date)
             
-            # 6. RCA wise Count
-            rca_trend = self._get_rca_trend(start_date, target_date)
+            # 6. RCA Sub-type wise Count
+            rca_subtype_trend = self._get_rca_subtype_trend(start_date, target_date)
             
             result = {
                 "status": "success",
@@ -63,9 +63,9 @@ class TrendPlotterAgent:
                 "total_trend": total_trend,
                 "region_trend": region_trend,
                 "exchange_trend": exchange_trend,
-                "ne_trend": ne_trend,
+                "city_trend": city_trend,
                 "sr_subtype_trend": sr_subtype_trend,
-                "rca_trend": rca_trend
+                "rca_subtype_trend": rca_subtype_trend
             }
             
             logger.info("Trend plot data generated successfully")
@@ -137,22 +137,22 @@ class TrendPlotterAgent:
         
         return result
 
-    def _get_ne_trend(self, start_date: datetime, end_date: datetime) -> Dict[str, Dict[str, Dict[str, List[Dict]]]]:
-        """Get daily counts per NE (cabinet_id), grouped by exchange and region."""
+    def _get_city_trend(self, start_date: datetime, end_date: datetime) -> Dict[str, Dict[str, Dict[str, List[Dict]]]]:
+        """Get daily counts per City, grouped by exchange and region."""
         query = f"""
-            SELECT sr_open_dt as date, region, exc_id, cabinet_id, COUNT(*) as count
+            SELECT sr_open_dt as date, region, exc_id, city, COUNT(*) as count
             FROM complaints_raw
             WHERE sr_open_dt BETWEEN '{start_date.date()}' AND '{end_date.date()}'
-            AND region IS NOT NULL AND exc_id IS NOT NULL AND cabinet_id IS NOT NULL
-            GROUP BY sr_open_dt, region, exc_id, cabinet_id
-            ORDER BY sr_open_dt, region, exc_id, cabinet_id
+            AND region IS NOT NULL AND exc_id IS NOT NULL AND city IS NOT NULL
+            GROUP BY sr_open_dt, region, exc_id, city
+            ORDER BY sr_open_dt, region, exc_id, city
         """
         df = pl.read_database(query, self.engine)
         
         if df.is_empty():
             return {}
         
-        # Group by region -> exchange -> NE
+        # Group by region -> exchange -> City
         result = {}
         for region in df['region'].unique().to_list():
             result[region] = {}
@@ -162,9 +162,9 @@ class TrendPlotterAgent:
                 result[region][exchange] = {}
                 exchange_df = region_df.filter(pl.col('exc_id') == exchange)
                 
-                for ne in exchange_df['cabinet_id'].unique().to_list():
-                    ne_data = exchange_df.filter(pl.col('cabinet_id') == ne)
-                    result[region][exchange][ne] = ne_data.select(['date', 'count']).to_dicts()
+                for city in exchange_df['city'].unique().to_list():
+                    city_data = exchange_df.filter(pl.col('city') == city)
+                    result[region][exchange][city] = city_data.select(['date', 'count']).to_dicts()
         
         return result
 
@@ -191,8 +191,8 @@ class TrendPlotterAgent:
         
         return result
 
-    def _get_rca_trend(self, start_date: datetime, end_date: datetime) -> Dict[str, List[Dict]]:
-        """Get daily counts per RCA."""
+    def _get_rca_subtype_trend(self, start_date: datetime, end_date: datetime) -> Dict[str, List[Dict]]:
+        """Get daily counts per RCA Sub-type."""
         query = f"""
             SELECT sr_open_dt as date, rca, COUNT(*) as count
             FROM complaints_raw

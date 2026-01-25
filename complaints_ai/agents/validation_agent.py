@@ -35,7 +35,7 @@ class ValidationAgent:
         try:
             # Load data for the period
             query = f"""
-                SELECT sr_row_id, sr_open_dttm, region, sr_type, rca, status
+                SELECT sr_number, sr_open_dttm, region, sr_type, rca, sr_status as status
                 FROM complaints_raw
                 WHERE sr_open_dt BETWEEN '{start_date}' AND '{end_date}'
             """

@@ -16,7 +16,7 @@ def create_dummy_data(filename, target_date):
     """Creates dummy complaint data for 30 days up to target_date."""
     print(f"Creating dummy data in {filename}...")
     
-    headers = ["sr_row_id", "sr_open_dttm", "sr_type", "region", "exc_id", "olt_id", "rca", "status", "vendor", "product_id", "cabinet_id", "sr_sub_type"]
+    headers = ["sr_number", "sr_row_id", "sr_open_dttm", "sr_type", "region", "exc_id", "olt_id", "rca", "status", "vendor", "product_id", "cabinet_id", "sr_sub_type"]
     rows = []
     
     target_dt = datetime.strptime(target_date, "%Y-%m-%d")
@@ -38,6 +38,7 @@ def create_dummy_data(filename, target_date):
         
         for i in range(daily_count):
             count += 1
+            sr_num = f"SR-{1000000 + count}"
             row_id = f"ROW_{count}"
             # Time distribution
             hour = 10 + (i % 10)
@@ -64,7 +65,7 @@ def create_dummy_data(filename, target_date):
                     rca = "Power Outage" # Clear RCA for anomaly
             
             rows.append([
-                row_id, timestamp, sr_type, region, exc, "OLT1", rca, "Closed", "Huawei", "GPON", cabinet, subtype
+                sr_num, row_id, timestamp, sr_type, region, exc, "OLT1", rca, "Closed", "Huawei", "GPON", cabinet, subtype
             ])
             
         current_dt += timedelta(days=1)

@@ -21,9 +21,9 @@ class IngestionAgent:
     
     def __init__(self):
         self.engine = get_engine()
-        # Updated required columns based on new schema
+        # Updated required columns: sr_number is now the primary key
         self.required_columns = [
-            "sr_row_id", "sr_open_dttm", "sr_type", "region", 
+            "sr_number", "sr_open_dttm", "sr_type", "region", 
             "exc_id"
         ]
 
@@ -274,30 +274,26 @@ class IngestionAgent:
             session = get_session()
             inserted_count = 0
             
-            # Check for existing IDs to avoid duplicates
-            batch_ids = [str(r['sr_row_id']) for r in records] # Ensuring string conversion just in case
+            # Check for existing IDs (now using sr_number as PK) to avoid duplicates
+            batch_ids = [str(r['sr_number']) for r in records if r.get('sr_number')]
             if not batch_ids:
-                 logger.warning("No row IDs found in batch.")
-                 return {"status": "error", "message": "No row IDs found."}
+                 logger.warning("No SR numbers found in batch.")
+                 return {"status": "error", "message": "No SR numbers found."}
                  
-            existing_ids = session.query(ComplaintsRaw.sr_row_id)\
-                .filter(ComplaintsRaw.sr_row_id.in_(batch_ids))\
+            existing_ids = session.query(ComplaintsRaw.sr_number)\
+                .filter(ComplaintsRaw.sr_number.in_(batch_ids))\
                 .all()
             existing_ids_set = {str(id[0]) for id in existing_ids}
             
-            logger.info(f"Found {len(existing_ids_set)} existing IDs out of {len(batch_ids)} candidates.")
-            
-            # Filter matches
-            # We need to construct objects matching the model. 
-            # `records` keys must match `ComplaintsRaw` attributes.
-            # extra keys in `records` that aren't in model will cause error.
-            # We filter `records` content to only model columns.
+            logger.info(f"Found {len(existing_ids_set)} existing SR numbers out of {len(batch_ids)} candidates.")
             
             model_columns = ComplaintsRaw.__table__.columns.keys()
             
             new_records = []
             for rec in records:
-                if rec['sr_row_id'] in existing_ids_set:
+                # Ensure we have a valid SR number
+                sr_val = str(rec.get('sr_number', ''))
+                if not sr_val or sr_val in existing_ids_set:
                     continue
                 # filter dict to only model columns
                 filtered_rec = {k: v for k, v in rec.items() if k in model_columns}
