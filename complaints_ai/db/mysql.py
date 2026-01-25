@@ -4,7 +4,9 @@ from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 from .models import Base
 
-load_dotenv()
+# Load .env from the root of the 'complaints_ai' package
+env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
+load_dotenv(env_path)
 
 def get_db_url():
     user = os.getenv('DB_USER', 'root')
