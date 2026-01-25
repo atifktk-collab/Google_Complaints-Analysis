@@ -27,12 +27,25 @@ st.markdown("""
         color: #1f77b4;
         text-align: center;
         margin-bottom: 2rem;
+        font-weight: bold;
     }
     .metric-card {
         background-color: #f0f2f6;
         padding: 1rem;
         border-radius: 0.5rem;
         margin: 0.5rem 0;
+    }
+    .stButton>button {
+        width: 100%;
+        background-color: #1f77b4;
+        color: white;
+        font-weight: bold;
+    }
+    .stButton>button:hover {
+        background-color: #1565c0;
+    }
+    .sidebar .sidebar-content {
+        background-color: #f8f9fa;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -58,9 +71,20 @@ def main():
                 unsafe_allow_html=True)
     
     # Sidebar
-    st.sidebar.title("Navigation")
+    st.sidebar.title("📊 Navigation")
+    st.sidebar.markdown("---")
     page = st.sidebar.radio("Go to", 
                             ["Overview", "Analyze Single Complaint", "Detailed Analytics"])
+    
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ℹ️ About")
+    st.sidebar.info("""
+    This dashboard provides AI-powered analysis of customer complaints including:
+    - Sentiment Analysis
+    - Category Classification
+    - Priority Detection
+    - Keyword Extraction
+    """)
     
     if page == "Overview":
         show_overview()
@@ -74,12 +98,71 @@ def show_overview():
     """Display overview dashboard"""
     st.header("📈 Overview")
     
+    # File upload option
+    st.subheader("📁 Upload and Analyze Data")
+    uploaded_file = st.file_uploader(
+        "Upload a CSV file with complaints",
+        type=['csv'],
+        help="CSV file should have a 'complaint_text' column"
+    )
+    
+    if uploaded_file is not None:
+        try:
+            # Save uploaded file temporarily
+            import tempfile
+            import os
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_file:
+                tmp_file.write(uploaded_file.getbuffer())
+                tmp_path = tmp_file.name
+            
+            # Process the file
+            with st.spinner("Processing uploaded file..."):
+                from src.data.preprocessor import ComplaintPreprocessor
+                from src.models.complaint_analyzer import ComplaintAnalyzer
+                
+                df_upload = pd.read_csv(tmp_path)
+                if 'complaint_text' not in df_upload.columns and 'text' in df_upload.columns:
+                    df_upload['complaint_text'] = df_upload['text']
+                
+                preprocessor = ComplaintPreprocessor()
+                analyzer = ComplaintAnalyzer()
+                
+                results = []
+                progress_bar = st.progress(0)
+                for idx, row in df_upload.iterrows():
+                    try:
+                        analysis = analyzer.analyze(row['complaint_text'])
+                        results.append({
+                            'complaint_id': row.get('complaint_id', idx + 1),
+                            'complaint_text': row['complaint_text'],
+                            'sentiment': analysis['sentiment'],
+                            'sentiment_score': analysis['sentiment_score'],
+                            'category': analysis['category'],
+                            'priority': analysis['priority'],
+                            'keywords': ', '.join(analysis.get('keywords', []))
+                        })
+                        progress_bar.progress((idx + 1) / len(df_upload))
+                    except Exception as e:
+                        st.warning(f"Error processing row {idx + 1}: {str(e)}")
+                        continue
+                
+                df = pd.DataFrame(results)
+                # Save to processed directory
+                output_path = PROCESSED_DATA_DIR / "analyzed_complaints.csv"
+                df.to_csv(output_path, index=False)
+                st.success(f"✅ Successfully analyzed {len(df)} complaints!")
+                os.unlink(tmp_path)
+                
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+            return
+    
     # Load data
     df = load_data()
     
     if df is None or df.empty:
-        st.warning("No data available. Please run the analysis first.")
-        st.info("Run: `python main.py --input data/raw/complaints.csv`")
+        st.warning("No data available. Please run the analysis first or upload a file above.")
+        st.info("💡 Tip: You can upload a CSV file above or run: `python main.py --input data/raw/complaints.csv`")
         return
     
     # Metrics
@@ -134,9 +217,20 @@ def show_overview():
     st.plotly_chart(fig, use_container_width=True)
     
     # Recent complaints table
-    st.subheader("Recent Complaints")
+    st.subheader("📋 Recent Complaints")
     display_df = df[['complaint_id', 'sentiment', 'category', 'priority']].head(10)
-    st.dataframe(display_df, use_container_width=True)
+    st.dataframe(display_df, use_container_width=True, height=300)
+    
+    # Download button for full data
+    st.markdown("---")
+    st.subheader("💾 Export Data")
+    csv = df.to_csv(index=False)
+    st.download_button(
+        label="📥 Download Full Analysis as CSV",
+        data=csv,
+        file_name="complaints_analysis.csv",
+        mime="text/csv"
+    )
 
 
 def show_single_analysis():
@@ -208,9 +302,13 @@ def show_single_analysis():
                     
                     # Keywords
                     if 'keywords' in result and result['keywords']:
-                        st.subheader("Key Topics")
+                        st.subheader("🔑 Key Topics")
                         keywords_str = ", ".join(result['keywords'])
                         st.info(keywords_str)
+                    
+                    # Show full analysis details
+                    with st.expander("📋 View Full Analysis Details"):
+                        st.json(result)
                     
                 except Exception as e:
                     st.error(f"Error analyzing complaint: {str(e)}")
@@ -260,14 +358,19 @@ def show_detailed_analytics():
     st.plotly_chart(fig, use_container_width=True)
     
     # Download button
-    st.subheader("Download Data")
+    st.subheader("💾 Export Filtered Data")
     csv = filtered_df.to_csv(index=False)
     st.download_button(
-        label="Download Filtered Data as CSV",
+        label="📥 Download Filtered Data as CSV",
         data=csv,
         file_name="filtered_complaints.csv",
         mime="text/csv"
     )
+    
+    # Show sample of filtered data
+    if len(filtered_df) > 0:
+        st.subheader("📋 Sample Data")
+        st.dataframe(filtered_df.head(20), use_container_width=True, height=400)
 
 
 if __name__ == "__main__":
