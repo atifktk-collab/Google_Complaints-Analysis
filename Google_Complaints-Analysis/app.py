@@ -9,6 +9,7 @@ from pathlib import Path
 
 from src.models.complaint_analyzer import ComplaintAnalyzer
 from src.data.data_loader import load_complaints_data
+from src.utils.function_status import FunctionStatusChecker
 from config import PROCESSED_DATA_DIR
 
 # Page configuration
@@ -74,7 +75,7 @@ def main():
     st.sidebar.title("📊 Navigation")
     st.sidebar.markdown("---")
     page = st.sidebar.radio("Go to", 
-                            ["Overview", "Analyze Single Complaint", "Detailed Analytics"])
+                            ["Overview", "Analyze Single Complaint", "Detailed Analytics", "System Status"])
     
     st.sidebar.markdown("---")
     st.sidebar.markdown("### ℹ️ About")
@@ -92,6 +93,8 @@ def main():
         show_single_analysis()
     elif page == "Detailed Analytics":
         show_detailed_analytics()
+    elif page == "System Status":
+        show_system_status()
 
 
 def show_overview():
@@ -371,6 +374,146 @@ def show_detailed_analytics():
     if len(filtered_df) > 0:
         st.subheader("📋 Sample Data")
         st.dataframe(filtered_df.head(20), use_container_width=True, height=400)
+
+
+def show_system_status():
+    """Display system status and function health"""
+    st.header("🔧 System Status & Functions Health")
+    
+    # Check status button
+    if st.button("🔄 Refresh Status", type="primary"):
+        st.cache_data.clear()
+    
+    with st.spinner("Checking system status..."):
+        try:
+            checker = FunctionStatusChecker()
+            status_data = checker.get_all_functions_status()
+            
+            # Summary metrics
+            summary = status_data.get("summary", {})
+            st.subheader("📊 Overall System Health")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Functions", summary.get("total", 0))
+            with col2:
+                st.metric("Working", summary.get("working", 0), 
+                         delta=f"{summary.get('health_percentage', 0)}%")
+            with col3:
+                st.metric("Available", summary.get("available", 0))
+            with col4:
+                st.metric("Errors", summary.get("error", 0), 
+                         delta=None if summary.get("error", 0) == 0 else "⚠️")
+            
+            # Health indicator
+            health_pct = summary.get("health_percentage", 0)
+            if health_pct >= 90:
+                st.success(f"✅ System Health: {health_pct}% - Excellent")
+            elif health_pct >= 70:
+                st.warning(f"⚠️ System Health: {health_pct}% - Good")
+            else:
+                st.error(f"❌ System Health: {health_pct}% - Needs Attention")
+            
+            st.markdown("---")
+            
+            # Analyzer Functions
+            st.subheader("🤖 Analyzer Functions")
+            analyzer_funcs = status_data.get("analyzer", {})
+            
+            for func_name, func_info in analyzer_funcs.items():
+                status = func_info.get("status", "unknown")
+                status_icon = "✅" if status == "working" else "⚠️" if status == "available" else "❌"
+                status_color = "green" if status == "working" else "orange" if status == "available" else "red"
+                
+                with st.expander(f"{status_icon} {func_name} - {status.upper()}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Status:** <span style='color:{status_color}'>{status.upper()}</span>", 
+                                unsafe_allow_html=True)
+                        st.write(f"**Tested:** {'Yes' if func_info.get('tested') else 'No'}")
+                        if func_info.get("error"):
+                            st.error(f"Error: {func_info['error']}")
+                    with col2:
+                        params = func_info.get("parameters", [])
+                        st.write(f"**Parameters:** {', '.join(params) if params else 'None'}")
+                        st.write(f"**Test Result:** {func_info.get('test_result', 'N/A')}")
+                    
+                    docstring = func_info.get("docstring", "No documentation")
+                    if docstring and docstring != "No documentation":
+                        st.markdown("**Documentation:**")
+                        st.info(docstring[:200] + "..." if len(docstring) > 200 else docstring)
+            
+            st.markdown("---")
+            
+            # Data Functions
+            st.subheader("📁 Data Processing Functions")
+            data_funcs = status_data.get("data", {})
+            
+            for func_name, func_info in data_funcs.items():
+                status = func_info.get("status", "unknown")
+                status_icon = "✅" if status == "working" else "⚠️" if status == "available" else "❌"
+                status_color = "green" if status == "working" else "orange" if status == "available" else "red"
+                
+                with st.expander(f"{status_icon} {func_name} - {status.upper()}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Status:** <span style='color:{status_color}'>{status.upper()}</span>", 
+                                unsafe_allow_html=True)
+                        st.write(f"**Tested:** {'Yes' if func_info.get('tested') else 'No'}")
+                        if func_info.get("error"):
+                            st.error(f"Error: {func_info['error']}")
+                    with col2:
+                        params = func_info.get("parameters", [])
+                        st.write(f"**Parameters:** {', '.join(params) if params else 'None'}")
+                        st.write(f"**Test Result:** {func_info.get('test_result', 'N/A')}")
+                    
+                    docstring = func_info.get("docstring", "No documentation")
+                    if docstring and docstring != "No documentation":
+                        st.markdown("**Documentation:**")
+                        st.info(docstring[:200] + "..." if len(docstring) > 200 else docstring)
+            
+            st.markdown("---")
+            
+            # Visualization Functions
+            st.subheader("📊 Visualization Functions")
+            viz_funcs = status_data.get("visualization", {})
+            
+            for func_name, func_info in viz_funcs.items():
+                status = func_info.get("status", "unknown")
+                status_icon = "✅" if status == "available" else "❌"
+                status_color = "green" if status == "available" else "red"
+                
+                with st.expander(f"{status_icon} {func_name} - {status.upper()}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write(f"**Status:** <span style='color:{status_color}'>{status.upper()}</span>", 
+                                unsafe_allow_html=True)
+                        if func_info.get("error"):
+                            st.error(f"Error: {func_info['error']}")
+                    with col2:
+                        params = func_info.get("parameters", [])
+                        st.write(f"**Parameters:** {', '.join(params) if params else 'None'}")
+                    
+                    docstring = func_info.get("docstring", "No documentation")
+                    if docstring and docstring != "No documentation":
+                        st.markdown("**Documentation:**")
+                        st.info(docstring[:200] + "..." if len(docstring) > 200 else docstring)
+            
+            # Export status report
+            st.markdown("---")
+            st.subheader("💾 Export Status Report")
+            import json
+            status_json = json.dumps(status_data, indent=2, default=str)
+            st.download_button(
+                label="📥 Download Status Report (JSON)",
+                data=status_json,
+                file_name="system_status_report.json",
+                mime="application/json"
+            )
+            
+        except Exception as e:
+            st.error(f"Error checking system status: {str(e)}")
+            st.exception(e)
 
 
 if __name__ == "__main__":
