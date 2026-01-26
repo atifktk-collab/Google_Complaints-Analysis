@@ -1,6 +1,7 @@
 import polars as pl
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from sqlalchemy.dialects.mysql import insert
 from sqlalchemy.exc import IntegrityError
 import logging
 import os
@@ -268,51 +269,59 @@ class IngestionAgent:
                       }
                   }
 
-            # 4. Bulk Insert
+            # 4. Upsert (Insert or Update on Duplicate Key)
             records = df.to_dicts()
             
+            if not records:
+                logger.warning("No records found to ingest.")
+                return {"status": "success", "processed_rows": 0, "inserted_rows": 0}
+
             session = get_session()
-            inserted_count = 0
-            
-            # Check for existing IDs (now using sr_number as PK) to avoid duplicates
-            batch_ids = [str(r['sr_number']) for r in records if r.get('sr_number')]
-            if not batch_ids:
-                 logger.warning("No SR numbers found in batch.")
-                 return {"status": "error", "message": "No SR numbers found."}
-                 
-            existing_ids = session.query(ComplaintsRaw.sr_number)\
-                .filter(ComplaintsRaw.sr_number.in_(batch_ids))\
-                .all()
-            existing_ids_set = {str(id[0]) for id in existing_ids}
-            
-            logger.info(f"Found {len(existing_ids_set)} existing SR numbers out of {len(batch_ids)} candidates.")
+            upserted_count = 0
             
             model_columns = ComplaintsRaw.__table__.columns.keys()
             
-            new_records = []
+            # Filter records to only include columns present in the model
+            clean_records = []
             for rec in records:
-                # Ensure we have a valid SR number
-                sr_val = str(rec.get('sr_number', ''))
-                if not sr_val or sr_val in existing_ids_set:
-                    continue
-                # filter dict to only model columns
-                filtered_rec = {k: v for k, v in rec.items() if k in model_columns}
-                new_records.append(ComplaintsRaw(**filtered_rec))
+                if rec.get('sr_number'):
+                    filtered_rec = {k: v for k, v in rec.items() if k in model_columns}
+                    clean_records.append(filtered_rec)
             
-            if new_records:
-                session.bulk_save_objects(new_records)
+            if clean_records:
+                # Use MySQL-specific insert for ON DUPLICATE KEY UPDATE
+                stmt = insert(ComplaintsRaw).values(clean_records)
+                
+                # Identify columns actually present in the input data (take from first record)
+                input_cols = clean_records[0].keys()
+                
+                # Define columns to update on conflict (all provided columns except the primary key)
+                update_dict = {
+                    col: stmt.inserted[col]
+                    for col in input_cols
+                    if col != 'sr_number'
+                }
+                
+                if update_dict:
+                    upsert_stmt = stmt.on_duplicate_key_update(**update_dict)
+                else:
+                    # If only sr_number is provided, just do a normal insert that ignores duplicates
+                    upsert_stmt = stmt.prefix_with("IGNORE")
+                
+                result = session.execute(upsert_stmt)
                 session.commit()
-                inserted_count = len(new_records)
-                logger.info(f"Successfully inserted {inserted_count} new records.")
+                # rowcount for upsert is: 1 for insert, 2 for update
+                upserted_count = result.rowcount
+                logger.info(f"Upsert operation completed. Rowcount affected: {upserted_count}")
             else:
-                logger.info("No new unique records found.")
+                logger.info("No valid records found in batch.")
                 
             session.close()
 
             return {
                 "status": "success",
                 "processed_rows": len(df),
-                "inserted_rows": inserted_count,
+                "upserted_rowcount": upserted_count,
                 "diagnostics": {
                     "columns_found": df.columns,
                     "rows_read": len(df),

@@ -103,6 +103,31 @@ st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotter", "Surge Highlighter", "Repeat Analysis", "Executive Insights"])
 
 st.sidebar.markdown("---")
+st.sidebar.subheader("📅 Global Controls")
+
+# Initialize global date in session state
+if 'global_date' not in st.session_state:
+    st.session_state.global_date = date.today() - timedelta(days=1)
+
+# Global Date Selection
+target_date = st.sidebar.date_input("Select Analysis Date", st.session_state.global_date)
+st.session_state.global_date = target_date
+
+# Global Analysis Trigger
+if st.sidebar.button("🚀 Run Analysis for this Date", type="primary"):
+    with st.spinner(f"Running full analysis pipeline for {target_date}..."):
+        result = orchestrator.run_pipeline(
+            target_date=str(target_date),
+            run_ingestion=False
+        )
+        if result.get('status') == 'success':
+            st.sidebar.success(f"Analysis complete for {target_date}!")
+            # Use a timestamp to force refresh if needed, or just rely on streamlit state
+            st.session_state.last_analysis_run = time.time()
+        else:
+            st.sidebar.error(f"Analysis failed: {result.get('message')}")
+
+st.sidebar.markdown("---")
 st.sidebar.info("System Status: **Active** (Daily Analysis Mode)")
 
 # DB Stats for debugging
@@ -123,7 +148,8 @@ if page == "CSV Upload":
     
     col1, col2 = st.columns(2)
     with col1:
-        target_date = st.date_input("Data Date", date.today() - timedelta(days=1))
+        st.info(f"Targeting upload for: **{target_date}**")
+        st.caption("Change date in sidebar if uploading for a different day.")
     with col2:
         run_baseline = st.checkbox("Recalculate Baselines", value=False)
     
@@ -176,19 +202,7 @@ if page == "CSV Upload":
 # --- Page 2: Daily Dashboard ---
 elif page == "Daily Dashboard":
     st.title("📊 Daily Analytics Dashboard")
-    
-    # Filters
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        target_date = st.date_input("Select Date", date.today() - timedelta(days=1))
-    with col2:
-        if st.button("Run Analysis for this Date"):
-             with st.spinner("Running Daily Analysis..."):
-                 orchestrator.run_pipeline(
-                     target_date=str(target_date),
-                     run_ingestion=False
-                 )
-                 st.success("Analysis Complete!")
+    st.info(f"Showing analysis for: **{target_date}** (Change in sidebar)")
 
     # KPIs
     # Query Data
@@ -414,20 +428,16 @@ elif page == "Daily Dashboard":
 
 # --- Page 3: Trend Plotter ---
 elif page == "Trend Plotter":
-    st.title("📈 Trend Plotter - 30-Day Historical Analysis")
-    st.markdown("Visualize complaint trends over the last 30 days with hierarchical drill-down capabilities.")
+    st.title("📈 Trend Plotter - Historical Analysis")
+    st.markdown(f"Visualizing complaint trends ending **{target_date}** (Change in sidebar).")
     
-    # Date selection
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        end_date = st.date_input("End Date", date.today() - timedelta(days=1))
-    with col2:
-        days_back = st.slider("Days to Show", 7, 90, 30)
+    # Configuration section
+    days_back = st.slider("Days to Show", 7, 90, 30)
     
     # Generate trend data
     with st.spinner("Loading trend data..."):
         trend_data = trend_plotter.run({
-            "target_date": str(end_date),
+            "target_date": str(target_date),
             "days_back": days_back
         })
     
@@ -662,24 +672,22 @@ elif page == "Trend Plotter":
 # --- Page 4: Surge Highlighter ---
 elif page == "Surge Highlighter":
     st.title("🚨 Surge Highlighter - Complaint Spike Detection")
-    st.markdown("Detect and highlight complaint surges by comparing with MTD average and same day last week.")
+    st.markdown(f"Detecting complaint surges for **{target_date}** compared with MTD average and same day last week.")
     
     # Configuration section
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
-        target_date = st.date_input("Target Date", date.today() - timedelta(days=1))
-    with col2:
         alarming_threshold = st.number_input("Alarming Threshold (%)", min_value=0.0, max_value=100.0, value=20.0, step=5.0)
-    with col3:
+    with col2:
         critical_threshold = st.number_input("Critical Threshold (%)", min_value=0.0, max_value=200.0, value=50.0, step=10.0)
     
-    if st.button("🔍 Analyze Surges", type="primary"):
-        with st.spinner("Analyzing complaint surges..."):
-            surge_data = surge_highlighter.run({
-                "target_date": str(target_date),
-                "alarming_threshold": alarming_threshold,
-                "critical_threshold": critical_threshold
-            })
+    # Run analysis for this view (or use global if already run, but thresholds can change)
+    with st.spinner("Analyzing complaint surges..."):
+        surge_data = surge_highlighter.run({
+            "target_date": str(target_date),
+            "alarming_threshold": alarming_threshold,
+            "critical_threshold": critical_threshold
+        })
         
         if surge_data['status'] != 'success':
             st.error(f"Failed to analyze surges: {surge_data.get('message', 'Unknown error')}")
@@ -812,16 +820,13 @@ elif page == "Surge Highlighter":
 # --- Page 5: Repeat Analysis ---
 elif page == "Repeat Analysis":
     st.title("🔄 Repeat Highlighter - MDN Frequency Analysis")
-    st.markdown("Track frequency of complaints from the same MDN within a rolling 30-day window.")
+    st.markdown(f"Tracking complaints from the same MDN for the 30-day period ending **{target_date}**.")
     
-    # Date selection
-    target_date = st.date_input("Target Date", date.today() - timedelta(days=1))
-    
-    if st.button("🔍 Analyze Repeaters", type="primary"):
-        with st.spinner("Analyzing MDN repetitions..."):
-            repeat_data = repeat_highlighter.run({
-                "target_date": str(target_date)
-            })
+    # Run analysis automatically for the global date
+    with st.spinner("Analyzing MDN repetitions..."):
+        repeat_data = repeat_highlighter.run({
+            "target_date": str(target_date)
+        })
         
         if repeat_data['status'] != 'success':
             st.error(f"Failed to analyze repeats: {repeat_data.get('message', 'Unknown error')}")
