@@ -101,8 +101,13 @@ class VariationAgent:
             prev_month_end = prev_month_start + (target_date - current_month_start)
 
             all_variations = []
+            target_dims = context.get('target_dimensions')
             
             for dim_name, dim_col in self.dimensions.items():
+                # Filter by target dimensions if provided
+                if target_dims and dim_name not in target_dims:
+                    continue
+                    
                 logger.info(f"Analyzing variations for dimension: {dim_name}")
                 
                 # Fetch all necessary dates in range efficiently (Max buffer needed: month + buffer)

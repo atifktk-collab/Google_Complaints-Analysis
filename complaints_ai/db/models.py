@@ -93,3 +93,23 @@ class ExecInsights(Base):
     title = Column(String(255), nullable=False)
     summary = Column(Text, nullable=False)
     severity = Column(Enum('INFO', 'WARNING', 'CRITICAL', name='insight_sev_enum'), nullable=False)
+
+class DailyMTTR(Base):
+    __tablename__ = 'daily_mttr'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False, index=True)
+    dimension = Column(Enum('Region', 'City', 'Exchange', 'Total', name='dim_mttr_enum'), nullable=False)
+    dimension_key = Column(String(200), nullable=False)
+    avg_mttr_hours = Column(Float, nullable=False)
+    total_resolved_count = Column(Integer, nullable=False)
+
+class DailyAging(Base):
+    __tablename__ = 'daily_aging'
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(Date, nullable=False, index=True)
+    dimension = Column(Enum('Region', 'City', 'Exchange', 'Total', name='dim_mttr_enum'), nullable=False)
+    dimension_key = Column(String(200), nullable=False)
+    slab = Column(Enum('> 24 Hours', '> 48 Hours', '> 72 Hours', '> 6 Days', '> 10 Days', '> 30 Days', '> 60 Days', name='aging_slab_enum'), nullable=False)
+    count = Column(Integer, nullable=False)

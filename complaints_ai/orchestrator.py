@@ -15,6 +15,7 @@ from complaints_ai.agents.rca_agent import RCAAgent
 from complaints_ai.agents.severity_agent import SeverityAgent
 from complaints_ai.agents.narrator_agent import NarratorAgent
 from complaints_ai.agents.repeat_highlighter_agent import RepeatHighlighterAgent
+from complaints_ai.agents.resolution_agent import ResolutionAgent
 from complaints_ai.db.mysql import init_db
 
 # Configure global logging
@@ -38,6 +39,7 @@ class Orchestrator:
         self.severity_agent = SeverityAgent()
         self.narrator_agent = NarratorAgent()
         self.repeat_highlighter_agent = RepeatHighlighterAgent()
+        self.resolution_agent = ResolutionAgent()
         
         # Ensure DB is ready
         init_db()
@@ -46,7 +48,8 @@ class Orchestrator:
                      file_path: Optional[str] = None,
                      target_date: Optional[str] = None,
                      run_ingestion: bool = True,
-                     run_baseline: bool = False):
+                     run_baseline: bool = False,
+                     target_dimensions: Optional[List[str]] = None):
         
         logger.info("Starting Daily Pipeline Execution")
         
@@ -77,20 +80,32 @@ class Orchestrator:
         # Typically run daily, or if requested
         if run_baseline:
             logger.info("Step 3: Baseline Calculation")
-            self.baseline_agent.run({"target_date": target_date})
+            self.baseline_agent.run({
+                "target_date": target_date,
+                "target_dimensions": target_dimensions
+            })
             
         # 4. Anomaly Detection
         logger.info(f"Step 4: Daily Anomaly Detection for {target_date}")
-        anom_res = self.anomaly_agent.run({"target_date": target_date})
+        anom_res = self.anomaly_agent.run({
+            "target_date": target_date,
+            "target_dimensions": target_dimensions
+        })
         
         if anom_res['status'] == 'success':
             # 5. Trend Analysis
             logger.info("Step 5: Trend Analysis")
-            self.trend_agent.run({"target_date": target_date})
+            self.trend_agent.run({
+                "target_date": target_date,
+                "target_dimensions": target_dimensions
+            })
             
             # 6. Variation Analysis
             logger.info("Step 6: Variation Analysis")
-            self.variation_agent.run({"target_date": target_date})
+            self.variation_agent.run({
+                "target_date": target_date,
+                "target_dimensions": target_dimensions
+            })
             
             if anom_res.get('anomalies_found', 0) > 0:
                 # 7. Correlation
@@ -114,6 +129,12 @@ class Orchestrator:
             # 11. Repeat Analysis (Always run for the target date)
             logger.info(f"Step 11: Repeat MDN Analysis for {target_date}")
             self.repeat_highlighter_agent.run({"target_date": target_date})
+
+            # 12. Resolution & Aging Analysis
+            logger.info(f"Step 12: Resolution & Aging Analysis for {target_date}")
+            self.resolution_agent.run({
+                "target_date": target_date
+            })
         
         logger.info("Daily Pipeline Execution Complete")
         

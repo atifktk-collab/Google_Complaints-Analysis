@@ -98,8 +98,13 @@ class TrendAgent:
             target_date = datetime.strptime(target_date_str, "%Y-%m-%d")
             
             all_trends = []
+            target_dims = context.get('target_dimensions')
             
             for dim_name, dim_col in self.dimensions.items():
+                # Filter by target dimensions if provided
+                if target_dims and dim_name not in target_dims:
+                    continue
+                    
                 logger.info(f"Analyzing trends for dimension: {dim_name}")
                 
                 for window in self.windows:
@@ -136,6 +141,11 @@ class TrendAgent:
                         # Calculate trend
                         trend_result = self.calculate_trend(values)
                         
+                        # Handle NaN significance (MySQL doesn't like NaN)
+                        significance = trend_result["significance"]
+                        if np.isnan(significance):
+                            significance = None
+                        
                         all_trends.append({
                             "trend_date": target_date_str,
                             "dimension": dim_name,
@@ -144,7 +154,7 @@ class TrendAgent:
                             "trend_direction": trend_result["direction"],
                             "trend_strength": trend_result["strength"],
                             "window_days": window,
-                            "significance": trend_result["significance"]
+                            "significance": significance
                         })
             
             # Store trends in database

@@ -17,6 +17,7 @@ from complaints_ai.orchestrator import Orchestrator
 from complaints_ai.agents.trend_plotter_agent import TrendPlotterAgent
 from complaints_ai.agents.surge_highlighter_agent import SurgeHighlighterAgent
 from complaints_ai.agents.repeat_highlighter_agent import RepeatHighlighterAgent
+from complaints_ai.agents.resolution_agent import ResolutionAgent
 from complaints_ai.ui.plotly_utils import create_area_chart, create_multi_line_chart, COLORS
 
 # Config
@@ -44,10 +45,15 @@ def get_surge_highlighter():
 def get_repeat_highlighter():
     return RepeatHighlighterAgent()
 
+@st.cache_resource
+def get_resolution_agent():
+    return ResolutionAgent()
+
 orchestrator = get_orchestrator()
 trend_plotter = get_trend_plotter()
 surge_highlighter = get_surge_highlighter()
 repeat_highlighter = get_repeat_highlighter()
+resolution_agent = get_resolution_agent()
 engine = get_engine()
 
 # Helper function to display surge cards
@@ -100,7 +106,7 @@ def _display_surge_card(surge, st_module):
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotter", "Surge Highlighter", "Repeat Analysis", "Executive Insights"])
+page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotter", "Surge Highlighter", "Repeat Analysis", "Resolution Analysis", "Executive Insights"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📅 Global Controls")
@@ -113,16 +119,42 @@ if 'global_date' not in st.session_state:
 target_date = st.sidebar.date_input("Select Analysis Date", st.session_state.global_date)
 st.session_state.global_date = target_date
 
-# Global Analysis Trigger
-if st.sidebar.button("🚀 Run Analysis for this Date", type="primary"):
-    with st.spinner(f"Running full analysis pipeline for {target_date}..."):
+# Global Analysis Triggers
+st.sidebar.markdown("**Analysis Action**")
+col_reg, col_city = st.sidebar.columns(2)
+
+if col_reg.button("🌍 Regional", use_container_width=True):
+    with st.spinner(f"Running Regional Analysis..."):
+        result = orchestrator.run_pipeline(
+            target_date=str(target_date),
+            run_ingestion=False,
+            target_dimensions=["Region"]
+        )
+        if result.get('status') == 'success':
+            st.sidebar.success("Regional analysis complete!")
+        else:
+            st.sidebar.error("Regional analysis failed")
+
+if col_city.button("🏙️ City", use_container_width=True):
+    with st.spinner(f"Running City Analysis..."):
+        result = orchestrator.run_pipeline(
+            target_date=str(target_date),
+            run_ingestion=False,
+            target_dimensions=["City"]
+        )
+        if result.get('status') == 'success':
+            st.sidebar.success("City analysis complete!")
+        else:
+            st.sidebar.error("City analysis failed")
+
+if st.sidebar.button("🚀 Run Full Analysis", type="primary", use_container_width=True):
+    with st.spinner(f"Running full analysis pipeline..."):
         result = orchestrator.run_pipeline(
             target_date=str(target_date),
             run_ingestion=False
         )
         if result.get('status') == 'success':
-            st.sidebar.success(f"Analysis complete for {target_date}!")
-            # Use a timestamp to force refresh if needed, or just rely on streamlit state
+            st.sidebar.success("Full analysis complete!")
             st.session_state.last_analysis_run = time.time()
         else:
             st.sidebar.error(f"Analysis failed: {result.get('message')}")
@@ -1002,7 +1034,138 @@ elif page == "Repeat Analysis":
                         hide_index=True
                     )
 
-# --- Page 6: Executive Insights ---
+# --- Page 6: Resolution Analysis ---
+elif page == "Resolution Analysis":
+    st.title("⏱️ Resolution & Aging Analysis")
+    st.markdown("Monitor Mean Time To Resolution (MTTR) and open complaint backlog aging.")
+    
+    # KPIs for Resolution
+    st.subheader(f"📊 Summary for {target_date}")
+    
+    q_mttr_summary = f"""
+        SELECT dimension, dimension_key, avg_mttr_hours, total_resolved_count
+        FROM daily_mttr 
+        WHERE date = '{target_date}' AND dimension = 'Total'
+    """
+    mttr_summary = pd.read_sql(q_mttr_summary, engine)
+    
+    q_aging_summary = f"""
+        SELECT slab, count
+        FROM daily_aging
+        WHERE date = '{target_date}' AND dimension = 'Total'
+    """
+    aging_summary = pd.read_sql(q_aging_summary, engine)
+    
+    k_col1, k_col2, k_col3, k_col4 = st.columns(4)
+    if not mttr_summary.empty:
+        k_col1.metric("Overall MTTR", f"{mttr_summary.iloc[0]['avg_mttr_hours']} hrs")
+        k_col2.metric("Total Resolved", mttr_summary.iloc[0]['total_resolved_count'])
+    else:
+        k_col1.metric("Overall MTTR", "N/A")
+        k_col2.metric("Total Resolved", "0")
+        
+    total_open = aging_summary['count'].sum() if not aging_summary.empty else 0
+    over_10d = aging_summary[aging_summary['slab'].isin(['> 10 Days', '> 30 Days', '> 60 Days'])]['count'].sum() if not aging_summary.empty else 0
+    
+    k_col3.metric("Total Open SRs", total_open)
+    k_col4.metric("Backlog > 10d", over_10d, delta_color="inverse")
+    
+    st.markdown("---")
+    
+    # MTTR Trend (Last 30 Days)
+    st.subheader("📈 MTTR Trend Analysis")
+    end_dt = target_date
+    start_dt = end_dt - timedelta(days=30)
+    
+    q_mttr_trend = f"""
+        SELECT date, avg_mttr_hours as mttr
+        FROM daily_mttr
+        WHERE dimension = 'Total' AND date BETWEEN '{start_dt}' AND '{end_dt}'
+        ORDER BY date
+    """
+    mttr_trend_df = pd.read_sql(q_mttr_trend, engine)
+    
+    if not mttr_trend_df.empty:
+        mttr_trend_df['date'] = pd.to_datetime(mttr_trend_df['date'])
+        
+        # Plotly Bar Chart for Daily MTTR
+        fig_mttr = px.bar(
+            mttr_trend_df, x='date', y='mttr',
+            title="Daily MTTR Trend (Last 30 Days)",
+            labels={'date': 'Date', 'mttr': 'Avg Hours'},
+            template="plotly_white",
+            color_discrete_sequence=['#3498db']
+        )
+        fig_mttr.update_layout(
+            hovermode="x unified",
+            xaxis_title="",
+            yaxis_title="MTTR (Hours)",
+            bargap=0.3
+        )
+        st.plotly_chart(fig_mttr, use_container_width=True)
+    else:
+        st.info("No MTTR trend data available for the last 30 days.")
+        
+    # Aging Visualization
+    st.markdown("---")
+    c1, c2 = st.columns([1, 1])
+    
+    with c1:
+        st.subheader("⌛ Open SR Aging (Total)")
+        if not aging_summary.empty:
+            # Sort slabs for logical presentation
+            slab_order = ["> 24 Hours", "> 48 Hours", "> 72 Hours", "> 6 Days", "> 10 Days", "> 30 Days", "> 60 Days"]
+            aging_summary['slab'] = pd.Categorical(aging_summary['slab'], categories=slab_order, ordered=True)
+            aging_summary = aging_summary.sort_values('slab')
+            
+            fig_aging = px.bar(
+                aging_summary, x='slab', y='count',
+                labels={'slab': 'Aging Slab', 'count': 'Number of SRs'},
+                color='count',
+                color_continuous_scale=px.colors.sequential.OrRd,
+                template="plotly_white"
+            )
+            st.plotly_chart(fig_aging, use_container_width=True)
+        else:
+            st.info("No open SR aging data available.")
+
+    with c2:
+        st.subheader("🗺️ Regional MTTR Breakdown")
+        q_reg_mttr = f"""
+            SELECT dimension_key as Region, avg_mttr_hours as MTTR
+            FROM daily_mttr
+            WHERE date = '{target_date}' AND dimension = 'Region'
+            ORDER BY avg_mttr_hours DESC
+        """
+        reg_mttr_df = pd.read_sql(q_reg_mttr, engine)
+        if not reg_mttr_df.empty:
+            fig_reg_mttr = px.bar(
+                reg_mttr_df, x='Region', y='MTTR',
+                color='MTTR', color_continuous_scale='Viridis',
+                template="plotly_white"
+            )
+            st.plotly_chart(fig_reg_mttr, use_container_width=True)
+        else:
+            st.info("No regional MTTR data.")
+
+    # Detailed Table
+    st.markdown("---")
+    st.subheader("📋 Dimensional MTTR Details")
+    sel_dim = st.selectbox("View MTTR by:", ["Region", "City", "Exchange"])
+    
+    q_dim_mttr = f"""
+        SELECT dimension_key as Name, avg_mttr_hours as MTTR, total_resolved_count as Resolved
+        FROM daily_mttr
+        WHERE date = '{target_date}' AND dimension = '{sel_dim}'
+        ORDER BY avg_mttr_hours DESC
+    """
+    dim_mttr_df = pd.read_sql(q_dim_mttr, engine)
+    if not dim_mttr_df.empty:
+        st.dataframe(dim_mttr_df, use_container_width=True, hide_index=True)
+    else:
+        st.info(f"No {sel_dim} data available for {target_date}.")
+
+# --- Page 7: Executive Insights ---
 elif page == "Executive Insights":
     st.title("📑 Executive Insights")
     

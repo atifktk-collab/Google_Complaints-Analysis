@@ -70,7 +70,13 @@ class AnomalyAgent:
             anomalies = []
             
             # 2. Iterate dimensions
+            target_dims = context.get('target_dimensions')
+            
             for dim_name, dim_col in self.dimensions.items():
+                # Filter by target dimensions if provided
+                if target_dims and dim_name not in target_dims:
+                    continue
+                    
                 baseline_file = f"{self.baseline_dir}/baseline_{dim_name.lower()}_daily.parquet"
                 if not os.path.exists(baseline_file):
                     logger.warning(f"Baseline file not found for {dim_name}, skipping.")
