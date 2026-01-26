@@ -106,7 +106,7 @@ def _display_surge_card(surge, st_module):
 
 # Sidebar Navigation
 st.sidebar.title("Navigation")
-page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotter", "Surge Highlighter", "Repeat Analysis", "Resolution Analysis", "Executive Insights"])
+page = st.sidebar.radio("Go to", ["CSV Upload", "Daily Dashboard", "Trend Plotter", "Surge Highlighter", "Repeat Analysis", "Resolution Analysis", "Data Management", "Executive Insights"])
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📅 Global Controls")
@@ -1165,7 +1165,59 @@ elif page == "Resolution Analysis":
     else:
         st.info(f"No {sel_dim} data available for {target_date}.")
 
-# --- Page 7: Executive Insights ---
+# --- Page 7: Data Management ---
+elif page == "Data Management":
+    st.title("📂 Data Management & Cleanup")
+    st.warning("⚠️ **Warning**: Deleting data is permanent. Please ensure you have backups if needed.")
+    
+    st.markdown("### Select Date Range for Removal")
+    col1, col2 = st.columns(2)
+    with col1:
+        start_del = st.date_input("Start Date", date.today() - timedelta(days=7))
+    with col2:
+        end_del = st.date_input("End Date", date.today())
+        
+    st.info(f"Analysis and Raw records from **{start_del}** to **{end_del}** (inclusive) will be deleted.")
+    
+    confirm = st.checkbox("🔥 I confirm that I want to PERMANENTLY delete this data.")
+    
+    if st.button("🗑️ Execute Cleanup", type="secondary", disabled=not confirm):
+        with st.spinner("Deleting records..."):
+            try:
+                # 1. Define Tables and their date columns
+                tables = {
+                    "complaints_raw": "sr_open_dt",
+                    "daily_anomalies": "anomaly_date",
+                    "daily_trends": "trend_date",
+                    "daily_variations": "variation_date",
+                    "daily_mttr": "date",
+                    "daily_aging": "date"
+                }
+                
+                results = {}
+                with engine.connect() as conn:
+                    trans = conn.begin()
+                    try:
+                        for table, date_col in tables.items():
+                            dq = text(f"DELETE FROM {table} WHERE {date_col} BETWEEN :start AND :end")
+                            res = conn.execute(dq, {"start": start_del, "end": end_del})
+                            results[table] = res.rowcount
+                        trans.commit()
+                        st.success("✅ Data cleanup successful!")
+                        
+                        # Show summary
+                        st.markdown("#### Cleanup Summary:")
+                        for table, count in results.items():
+                            st.write(f"- `{table}`: {count} rows removed")
+                            
+                    except Exception as ex:
+                        trans.rollback()
+                        st.error(f"❌ Deletion failed: {ex}")
+                
+            except Exception as e:
+                st.error(f"❌ Connection error: {e}")
+
+# --- Page 8: Executive Insights ---
 elif page == "Executive Insights":
     st.title("📑 Executive Insights")
     
