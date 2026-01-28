@@ -183,11 +183,17 @@ class IngestionAgent:
 
             # Date Parsing (Try multiple common formats)
             formats = [
+                "%d-%m-%Y %H:%M:%S",
+                "%d-%m-%Y %H:%M",
+                "%d/%m/%Y %H:%M",
+                "%m/%d/%Y %H:%M",
+                "%d-%m-%y %H:%M:%S",
+                "%d-%m-%y %H:%M",
                 "%d-%b-%y %H:%M:%S",
+                "%d-%b-%y %H:%M",
                 "%Y-%m-%d %H:%M:%S",
                 "%m/%d/%Y %H:%M:%S",
                 "%d/%m/%Y %H:%M:%S",
-                "%d-%m-%Y %H:%M:%S",
                 "%Y/%m/%d %H:%M:%S",
                 "%m/%d/%y %H:%M:%S",
                 "%d/%m/%y %H:%M:%S",
@@ -226,7 +232,7 @@ class IngestionAgent:
                 
                 if "sr_open_dt" in df.columns:
                      # Date only formats
-                     for fmt in ["%d-%b-%y", "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"]:
+                     for fmt in ["%d-%m-%Y", "%d-%m-%y", "%d-%b-%y", "%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y"]:
                          try:
                              temp_d = df["sr_open_dt"].str.strptime(pl.Date, format=fmt, strict=False)
                              df = df.with_columns(temp_d.alias("sr_open_dt"))
