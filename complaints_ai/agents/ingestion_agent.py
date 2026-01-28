@@ -173,7 +173,7 @@ class IngestionAgent:
             # 3. Data Transformation
             
             # Log sample raw date before parsing
-            if not df.is_empty() and "sr_open_dttm" in df.columns:
+            if not df.is_empty() and "sr_open_dttm" in df.columns and len(df["sr_open_dttm"]) > 0:
                 # Store original string for diagnostics if parsing fails
                 df = df.with_columns(pl.col("sr_open_dttm").alias("raw_sr_open_dttm"))
                 raw_sample = df["sr_open_dttm"][0]
@@ -252,19 +252,24 @@ class IngestionAgent:
 
             # Drop rows where primary timestamps are missing
             rows_before_drop = len(df)
+            
+            # Store a sample raw value for diagnostics before dropping
+            sample_raw_date = "N/A"
+            if rows_before_drop > 0 and "raw_sr_open_dttm" in df.columns:
+                sample_raw_date = str(df["raw_sr_open_dttm"][0])
+
             df = df.drop_nulls(subset=["sr_open_dttm"])
             rows_after_drop = len(df)
             
             if rows_after_drop == 0:
-                  raw_val = df["raw_sr_open_dttm"][0] if ("raw_sr_open_dttm" in df.columns and rows_before_drop > 0) else "N/A"
-                  msg = f"No valid rows after date parsing (Raw sample: '{raw_val}')."
+                  msg = f"No valid rows after date parsing (Sample raw date: '{sample_raw_date}'). Please check file date format."
                   logger.error(msg)
                   return {
                       "status": "error", 
                       "message": msg,
                       "diagnostics": {
-                          "columns_found": df.columns.to_list() if rows_before_drop > 0 else [],
-                          "raw_sample": str(raw_val),
+                          "columns_found": df.columns,
+                          "raw_sample": sample_raw_date,
                           "total_rows_read": rows_before_drop
                       }
                   }

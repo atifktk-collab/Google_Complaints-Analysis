@@ -36,8 +36,18 @@ class ResolutionAgent:
 
         # Convert to datetime and calculate duration in hours
         df = df.with_columns([
-            (pl.col("sr_close_dttm") - pl.col("sr_open_dttm")).dt.total_seconds() / 3600
-        ]).rename({"sr_close_dttm": "duration_hours"})
+            (pl.col("sr_close_dttm") - pl.col("sr_open_dttm")).dt.total_seconds().alias("seconds")
+        ])
+        
+        # Filter: Exclude if resolution is less than 5 minutes (300 seconds)
+        df = df.filter(pl.col("seconds") >= 300)
+        
+        if df.is_empty():
+            return []
+            
+        df = df.with_columns([
+            (pl.col("seconds") / 3600).alias("duration_hours")
+        ])
         
         results = []
         
